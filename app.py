@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import os
 
 
-DATA_DIR = os.environ.get("DATA_DIR", "/var/data")
+DATA_DIR = os.environ.get("DATA_DIR", "/tmp/intraday_ai_data")
 os.makedirs(DATA_DIR, exist_ok=True)
 SETTINGS_FILE = os.path.join(DATA_DIR, "guide_settings.json")
 LAST_ALERT = {}
@@ -201,14 +201,14 @@ function draw(a){let c=document.getElementById('chart'),ctx=c.getContext('2d'),W
 async function guide(){
  try{
   let d=await (await fetch('/api/guide?x='+Date.now())).json();
-  if(d.settings){bot.value=d.settings.bot_token||'';chat.value=d.settings.chat_id||''}
+  if(d.settings){bot.value=d.settings.bot_token||localStorage.getItem('intraday_bot_token')||'';chat.value=d.settings.chat_id||localStorage.getItem('intraday_chat_id')||''; if(bot.value && chat.value && (!d.settings.bot_token || !d.settings.chat_id)){saveAlerts(true)}} else {bot.value=localStorage.getItem('intraday_bot_token')||'';chat.value=localStorage.getItem('intraday_chat_id')||''}
   if(d.state==="PRE-OPEN"){best.className="panel none";besttext.innerHTML="🟡 <b>PRE-OPEN</b> — Do not buy yet.";reason.textContent="Wait for market confirmation after 9:15 AM."}
   if(d.state==="CLOSED"){besttext.innerHTML="🔴 <b>MARKET CLOSED</b>";reason.textContent="Tomorrow the scanner will start automatically when the market opens."}
   if(d.state==="OPEN" && d.guide.action==="BUY"){best.className="panel best";besttext.innerHTML="🟢 <b>BUY NOW — "+d.guide.symbol+"</b>";reason.textContent="Multiple confirmations passed. Check the scanner's Entry / Target / SL before placing any order."}
   else if(d.state==="OPEN" && d.guide.action==="SELL"){best.className="panel warn";besttext.innerHTML="🔴 <b>SELL SETUP — "+d.guide.symbol+"</b>";reason.textContent="Bearish/short setup. This is not an EXIT signal for an existing long position."}
  }catch(e){}
 }
-async function saveAlerts(){await fetch('/api/save-alerts?bot_token='+encodeURIComponent(bot.value)+'&chat_id='+encodeURIComponent(chat.value));msg.textContent='Phone alerts saved.'}
+async function saveAlerts(silent=false){localStorage.setItem('intraday_bot_token',bot.value);localStorage.setItem('intraday_chat_id',chat.value);await fetch('/api/save-alerts?bot_token='+encodeURIComponent(bot.value)+'&chat_id='+encodeURIComponent(chat.value));if(!silent)msg.textContent='Phone alerts saved.'}
 async function testAlert(){let d=await (await fetch('/api/test-alert?x='+Date.now())).json();msg.textContent=d.ok?'Test alert sent to phone.':'Telegram connection failed — check Bot Token and Chat ID.'}
 setInterval(guide,2000); guide();
 

@@ -2,11 +2,7 @@ services:
   - type: web
     name: intraday-ai
     runtime: python
-    plan: starter
+    plan: free
     buildCommand: "python -m py_compile app.py"
     startCommand: "python app.py"
     healthCheckPath: "/health"
-    disk:
-      name: intraday-data
-      mountPath: /var/data
-      sizeGB: 1
