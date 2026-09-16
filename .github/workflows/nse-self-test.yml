@@ -1,0 +1,35 @@
+name: NSE Scanner Self Test
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install
+        run: pip install -r requirements.txt
+      - name: Syntax
+        run: python -m py_compile app.py
+      - name: NSE live universe test
+        run: |
+          python - <<'PY'
+          from nsemine import live, nse
+          eq = nse.get_all_equities_list()
+          print('NSE EQUITY MASTER:', 0 if eq is None else len(eq))
+          if eq is None or len(eq) < 1000:
+              raise SystemExit('NSE equity master returned too few securities')
+          snap = live.get_all_securities_live_snapshot(series='EQ')
+          print('NSE LIVE EQ:', 0 if snap is None else len(snap))
+          if snap is None or len(snap) < 500:
+              raise SystemExit('NSE live equity snapshot returned too few securities')
+          print('PASS: NSE source usable')
+          print(snap.head(5).to_string(index=False))
+          PY
