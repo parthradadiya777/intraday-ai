@@ -4,5 +4,5 @@ services:
     runtime: python
     plan: free
     buildCommand: "python -m py_compile app_auto.py"
-    startCommand: "python app_auto.py"
+    startCommand: "python -c \"import sitecustomize; import runpy; runpy.run_module('app_auto', run_name='__main__')\""
     healthCheckPath: "/health"
