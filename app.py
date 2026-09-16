@@ -1,9 +1,8 @@
 import json, urllib.request, urllib.parse, webbrowser, threading, math, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta
+from datetime import datetime
 import os
-
 
 DATA_DIR = os.environ.get("DATA_DIR", "/tmp/intraday_ai_data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -11,27 +10,42 @@ SETTINGS_FILE = os.path.join(DATA_DIR, "guide_settings.json")
 LAST_ALERT = {}
 LAST_GUIDE = {"action":"WAIT", "symbol":None, "score":0}
 
+API_BASE = os.environ.get("MARKET_API_BASE", "https://65.0.104.9")
+
+
 def load_settings():
     try:
-        with open(SETTINGS_FILE,"r",encoding="utf-8") as f: return json.load(f)
-    except Exception: return {"bot_token":"","chat_id":"","alerts":True}
+        with open(SETTINGS_FILE,"r",encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {"bot_token":"","chat_id":"","alerts":True}
+
 
 def save_settings(s):
-    with open(SETTINGS_FILE,"w",encoding="utf-8") as f: json.dump(s,f)
+    with open(SETTINGS_FILE,"w",encoding="utf-8") as f:
+        json.dump(s,f)
+
 
 def telegram_send(text):
     s=load_settings()
-    if not s.get("alerts") or not s.get("bot_token") or not s.get("chat_id"): return False
+    if not s.get("alerts") or not s.get("bot_token") or not s.get("chat_id"):
+        return False
     try:
         url="https://api.telegram.org/bot"+s["bot_token"]+"/sendMessage"
         data=urllib.parse.urlencode({"chat_id":s["chat_id"],"text":text}).encode()
         req=urllib.request.Request(url,data=data,headers={"User-Agent":"IntradayAI"})
-        with urllib.request.urlopen(req,timeout=8) as r: return r.status==200
-    except Exception: return False
+        with urllib.request.urlopen(req,timeout=8) as r:
+            return r.status==200
+    except Exception:
+        return False
+
 
 def alert_once(key,text):
-    if LAST_ALERT.get(key): return
-    if telegram_send(text): LAST_ALERT[key]=True
+    if LAST_ALERT.get(key):
+        return
+    if telegram_send(text):
+        LAST_ALERT[key]=True
+
 
 def market_state():
     d=datetime.now()
@@ -50,82 +64,140 @@ SYMBOLS = ["RELIANCE","TCS","INFY","HDFCBANK","ICICIBANK","SBIN","ITC","LT","AXI
 "NESTLEIND","HEROMOTOCO","TVSMOTOR","DLF","VEDL","JINDALSTEL","PNB","BANKBARODA","CANBK","IDFCFIRSTB",
 "IRCTC","RVNL","IRFC","SAIL","NHPC","JIOFIN","PAYTM","ZOMATO"]
 
+
+def http_json(url, timeout=12):
+    req=urllib.request.Request(url,headers={"User-Agent":"IntradayAI/1.0","Accept":"application/json"})
+    with urllib.request.urlopen(req,timeout=timeout) as r:
+        if r.status != 200:
+            raise RuntimeError(f"HTTP {r.status}")
+        return json.load(r)
+
+
 def yahoo(symbol):
     url=f"https://query1.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(symbol)}.NS?range=1d&interval=1m"
-    req=urllib.request.Request(url,headers={"User-Agent":"Mozilla/5.0"})
-    with urllib.request.urlopen(req,timeout=8) as r:
-        return json.load(r)["chart"]["result"][0]
+    return http_json(url, timeout=10)["chart"]["result"][0]
+
+
+def free_api_quote(symbol):
+    # Fallback free Indian market API. It returns a compact live snapshot.
+    base=API_BASE.rstrip("/")
+    url=base+"/stock?symbol="+urllib.parse.quote(symbol+".NS")+"&res=num"
+    return http_json(url, timeout=8)
+
+
+def normalize_num(v):
+    if v is None: return None
+    if isinstance(v,(int,float)): return float(v)
+    if isinstance(v,dict):
+        x=v.get("value")
+        if isinstance(x,(int,float)): return float(x)
+    try: return float(str(v).replace(",",""))
+    except Exception: return None
+
 
 def ema(vals, n):
     if len(vals) < n: return None
     k=2/(n+1)
     e=sum(vals[:n])/n
-    for x in vals[n:]: e=x*k+e*(1-k)
+    for x in vals[n:]:
+        e=x*k+e*(1-k)
     return e
+
 
 def rsi(vals, n=14):
     if len(vals)<n+1: return None
     gains=[]; losses=[]
     for a,b in zip(vals[-n-1:-1], vals[-n:]):
-        d=b-a; gains.append(max(d,0)); losses.append(max(-d,0))
+        d=b-a
+        gains.append(max(d,0)); losses.append(max(-d,0))
     ag=sum(gains)/n; al=sum(losses)/n
     if al==0: return 100
     return 100-(100/(1+ag/al))
 
+
+def analyze_snapshot(symbol, p, ch, volume=0, history=None):
+    # Snapshot fallback: when candle history is unavailable, keep the signal conservative.
+    p=float(p)
+    change=float(ch or 0)
+    score=50
+    bear=0
+    if change > 0: score += min(25, change*8)
+    if change < 0: bear += min(25, abs(change)*8)
+    if change >= 0.8: score += 10
+    if change <= -0.8: bear += 10
+    final=max(0,min(100,score-bear+50-50))
+    signal="WAIT"
+    if score>=72 and score-bear>=30: signal="BUY"
+    elif bear>=72 and bear-score>=30: signal="SELL"
+    return {"symbol":symbol,"price":round(p,2),"change":round(change,2),"momentum":round(change,3),
+            "volume":int(volume or 0),"score":round(final,1),"signal":signal,
+            "ema9":None,"ema21":None,"rsi":None,"vwap":round(p,2),"source":"Free API"}
+
+
 def one(symbol):
+    # Try Yahoo candles first for technical indicators.
     try:
-        r=yahoo(symbol); q=r["indicators"]["quote"][0]
+        r=yahoo(symbol)
+        q=r["indicators"]["quote"][0]
         close=[x for x in q.get("close",[]) if x is not None]
         high=[x for x in q.get("high",[]) if x is not None]
         low=[x for x in q.get("low",[]) if x is not None]
         vol=[x for x in q.get("volume",[]) if x is not None]
-        if len(close)<25: raise ValueError()
-        p=close[-1]; prev=close[-2]
-        e9=ema(close,9); e21=ema(close,21); rr=rsi(close,14)
-        avgvol=sum(vol[-20:])/len(vol[-20:]) if vol[-20:] else 0
-        v=vol[-1] if vol else 0
-        ch=(p/close[0]-1)*100
-        mom=(p/prev-1)*100
-        recent_high=max(high[-20:]); recent_low=min(low[-20:])
-        # Intraday VWAP from available session candles.
-        pv=sum(((h+l+c)/3)*vv for h,l,c,vv in zip(high,low,close,vol))
-        tv=sum(vol)
-        vwap=pv/tv if tv else p
+        if len(close)>=25:
+            p=close[-1]; prev=close[-2]
+            e9=ema(close,9); e21=ema(close,21); rr=rsi(close,14)
+            avgvol=sum(vol[-20:])/len(vol[-20:]) if vol[-20:] else 0
+            v=vol[-1] if vol else 0
+            ch=(p/close[0]-1)*100
+            mom=(p/prev-1)*100
+            recent_high=max(high[-20:]); recent_low=min(low[-20:])
+            pv=sum(((h+l+c)/3)*vv for h,l,c,vv in zip(high,low,close,vol))
+            tv=sum(vol)
+            vwap=pv/tv if tv else p
+            score=0; bear=0
+            if e9 and p>e9: score+=15
+            if e21 and p>e21: score+=15
+            if e9 and e21 and e9>e21: score+=10
+            if rr is not None and 52<=rr<=68: score+=12
+            if rr is not None and rr>70: score-=8
+            if p>vwap: score+=12
+            if mom>0: score+=10
+            if ch>0: score+=8
+            if avgvol and v>=1.2*avgvol: score+=10
+            if p>=recent_high*0.998: score+=8
+            if e9 and p<e9: bear+=15
+            if e21 and p<e21: bear+=15
+            if e9 and e21 and e9<e21: bear+=10
+            if rr is not None and 32<=rr<=48: bear+=12
+            if p<vwap: bear+=12
+            if mom<0: bear+=10
+            if ch<0: bear+=8
+            if avgvol and v>=1.2*avgvol: bear+=10
+            if p<=recent_low*1.002: bear+=8
+            signal="WAIT"
+            final=max(0,min(100,50+score-bear))
+            if score>=70 and score-bear>=28: signal="BUY"
+            elif bear>=70 and bear-score>=28: signal="SELL"
+            return {"symbol":symbol,"price":round(p,2),"change":round(ch,2),"momentum":round(mom,3),
+                    "volume":int(v),"score":round(final,1),"signal":signal,
+                    "ema9":round(e9,2) if e9 else None,"ema21":round(e21,2) if e21 else None,
+                    "rsi":round(rr,1) if rr is not None else None,"vwap":round(vwap,2),"source":"Yahoo"}
+        raise ValueError("Yahoo returned insufficient candles")
+    except Exception as yahoo_err:
+        # Fallback to a single no-key market snapshot so the whole scan does not collapse to 0.
+        try:
+            x=free_api_quote(symbol)
+            p=(normalize_num(x.get("price")) or normalize_num(x.get("last_price")) or
+               normalize_num(x.get("lastPrice")) or normalize_num(x.get("ltp")))
+            ch=(normalize_num(x.get("change_percent")) or normalize_num(x.get("changePct")) or
+                normalize_num(x.get("pChange")) or normalize_num(x.get("change")))
+            vol=(normalize_num(x.get("volume")) or normalize_num(x.get("volumeTraded")) or 0)
+            if p is not None:
+                return analyze_snapshot(symbol,p,ch or 0,vol)
+        except Exception:
+            pass
+        return {"symbol":symbol,"error":True,"error_detail":str(yahoo_err)[:120]}
 
-        score=0
-        if e9 and p>e9: score+=15
-        if e21 and p>e21: score+=15
-        if e9 and e21 and e9>e21: score+=10
-        if rr is not None and 52<=rr<=68: score+=12
-        if rr is not None and rr>70: score-=8
-        if p>vwap: score+=12
-        if mom>0: score+=10
-        if ch>0: score+=8
-        if avgvol and v>=1.2*avgvol: score+=10
-        if p>=recent_high*0.998: score+=8
-        # bearish points
-        bear=0
-        if e9 and p<e9: bear+=15
-        if e21 and p<e21: bear+=15
-        if e9 and e21 and e9<e21: bear+=10
-        if rr is not None and 32<=rr<=48: bear+=12
-        if p<vwap: bear+=12
-        if mom<0: bear+=10
-        if ch<0: bear+=8
-        if avgvol and v>=1.2*avgvol: bear+=10
-        if p<=recent_low*1.002: bear+=8
-
-        signal="WAIT"
-        final=max(0,min(100,50+score-bear))
-        if score>=70 and score-bear>=28: signal="BUY"
-        elif bear>=70 and bear-score>=28: signal="SELL"
-
-        return {"symbol":symbol,"price":round(p,2),"change":round(ch,2),"momentum":round(mom,3),
-                "volume":int(v),"score":round(final,1),"signal":signal,
-                "ema9":round(e9,2) if e9 else None,"ema21":round(e21,2) if e21 else None,
-                "rsi":round(rr,1) if rr is not None else None,"vwap":round(vwap,2)}
-    except Exception:
-        return {"symbol":symbol,"error":True}
 
 def scan():
     global LAST_GUIDE
@@ -137,7 +209,8 @@ def scan():
         alert_once("close_"+datetime.now().strftime("%Y%m%d"),
                    "🔴 MARKET CLOSED\nIntraday AI has stopped live trading signals for today.")
     with ThreadPoolExecutor(max_workers=12) as ex:
-        data=[f.result() for f in as_completed([ex.submit(one,s) for s in SYMBOLS])]
+        futures=[ex.submit(one,s) for s in SYMBOLS]
+        data=[f.result() for f in as_completed(futures)]
     ok=[x for x in data if not x.get("error")]
     if state=="OPEN" and ok:
         buys=sorted([x for x in ok if x["signal"]=="BUY"],key=lambda x:x["score"],reverse=True)
@@ -160,8 +233,8 @@ def scan():
         LAST_GUIDE={"action":"WAIT","symbol":None,"score":0}
     return data
 
-HTML = r"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Intraday AI — Tomorrow Ready</title>
+HTML = r'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Intraday AI</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#f3f5f8;color:#172033;font-family:Arial,sans-serif}
 header{background:#101827;color:#fff;padding:20px 28px}h1{margin:0;font-size:25px}.sub{opacity:.72;margin-top:5px}
@@ -176,76 +249,66 @@ tr.click{cursor:pointer}tr.click:hover{background:#f5f8fb}#chart{width:100%;heig
 .small{font-size:12px;color:#697386}.strong{font-weight:800}
 @media(max-width:900px){.cards{grid-template-columns:repeat(3,1fr)}}@media(max-width:600px){.cards{grid-template-columns:repeat(2,1fr)}}
 </style></head><body>
-<header><h1>Intraday AI — Tomorrow Ready</h1><div class="sub">Trend + VWAP + RSI + EMA + momentum + volume + market confirmation</div>
+<header><h1>Intraday AI</h1><div class="sub">Trend + VWAP + RSI + EMA + momentum + volume + market confirmation</div>
 <div class="status"><span id="clock">🕐 --</span><span id="date">📅 --</span><span id="market">MARKET --</span><span id="last">Last data update: —</span><span id="next">Next scan: —</span></div></header>
 <div class="wrap">
-<div class="panel"><div class="controls"><b>Phone Alerts (Telegram)</b><input id="bot" placeholder="Bot Token" style="min-width:220px"><input id="chat" placeholder="Chat ID"><button onclick="saveAlerts()">SAVE ALERTS</button><button onclick="testAlert()">TEST PHONE</button></div><div class="small" style="margin-top:8px">The app itself will guide you. You do not need to come to ChatGPT for every BUY/WAIT decision. Keep the app running for alerts.</div></div>
-<div class="panel"><div class="controls"><b>Investment Budget ₹</b><input id="budget" type="number" value="100000"><b>Max Loss/Trade ₹</b><input id="risk" type="number" value="500"><b>Max Trades</b><input id="maxtrades" type="number" value="2"><select id="mode"><option>ALL STOCKS</option><option>BUY ONLY</option><option>SELL ONLY</option><option>WAIT ONLY</option></select><button onclick="scan()">SCAN NSE</button><span id="msg">Starting…</span></div></div>
-<div class="panel"><div class="cards"><div class="card">Stocks<span id="stocks" class="num">0</span></div><div class="card">BUY<span id="buys" class="num buy">0</span></div><div class="card">SELL<span id="sells" class="num sell">0</span></div><div class="card">WAIT<span id="waits" class="num wait">0</span></div><div class="card">Best Score<span id="topscore" class="num">—</span></div><div class="card">NIFTY Confirm<span id="nifty" class="num">—</span></div></div></div>
+<div class="panel"><div class="controls"><b>Phone Alerts (Telegram)</b><input id="bot" placeholder="Bot Token" style="min-width:220px"><input id="chat" placeholder="Chat ID"><button onclick="saveAlerts()">SAVE ALERTS</button><button onclick="testAlert()">TEST PHONE</button></div><div class="small" style="margin-top:8px">The app itself will guide you. Keep the app open during trading hours for browser-driven scans and alerts.</div></div>
+<div class="panel"><div class="controls"><b>Investment Budget ₹</b><input id="budget" type="number" value="5000"><b>Max Loss/Trade ₹</b><input id="risk" type="number" value="500"><b>Max Trades</b><input id="maxtrades" type="number" value="2"><select id="mode"><option>ALL STOCKS</option><option>BUY ONLY</option><option>SELL ONLY</option><option>WAIT ONLY</option></select><button onclick="scan()">SCAN NSE</button><span id="msg">Starting…</span></div></div>
+<div class="panel"><div class="cards"><div class="card">Stocks<span id="stocks" class="num">0</span></div><div class="card">BUY<span id="buys" class="num buy">0</span></div><div class="card">SELL<span id="sells" class="num sell">0</span></div><div class="card">WAIT<span id="waits" class="num wait">0</span></div><div class="card">Best Score<span id="topscore" class="num">—</span></div><div class="card">Data Source<span id="source" class="num">—</span></div></div></div>
 <div id="best" class="panel none"><b>🤖 TRADING GUIDE</b><div id="besttext">Waiting…</div><div id="reason" class="small" style="margin-top:7px"></div></div>
 <div class="panel"><h3>Stock Scanner</h3><div style="overflow:auto"><table><thead><tr><th>Stock</th><th>Price</th><th>Change</th><th>RSI</th><th>VWAP</th><th>EMA9</th><th>EMA21</th><th>Volume</th><th>Score</th><th>Signal</th><th>Budget Qty</th><th>Risk Qty</th><th>Plan Qty</th><th>Target</th><th>SL</th></tr></thead><tbody id="rows"></tbody></table></div></div>
 <div class="panel"><h3 id="chartTitle">Stock Chart — click a stock</h3><canvas id="chart"></canvas><div id="chartInfo" class="small"></div></div>
 <div class="panel"><h3>Signal History</h3><table><thead><tr><th>Time</th><th>Stock</th><th>Signal</th><th>Score</th><th>Price</th></tr></thead><tbody id="history"></tbody></table></div>
-<div class="panel warn"><b>Tomorrow's rule:</b> Before 9:15 AM the app should show WATCH/WAIT only. During market hours it can produce BUY/SELL only after multiple confirmations. Free Yahoo data may be delayed/cached/rate-limited; no signal guarantees profit.</div>
+<div class="panel warn"><b>Data note:</b> The scanner now has a fallback free Indian market API, but free data can still be delayed, cached, rate-limited or temporarily unavailable. Signals are informational and do not guarantee profit.</div>
 </div>
 <script>
 let nextAt=0,signalHistory=[];
-function tick(){let d=new Date();clock.textContent='🕐 '+d.toLocaleTimeString('en-IN',{hour12:true});date.textContent='📅 '+d.toLocaleDateString('en-IN');let m=d.getHours()*60+d.getMinutes(),w=d.getDay();let open=w>=1&&w<=5&&m>=555&&m<=930;market.textContent=open?'🟢 MARKET OPEN':'🔴 MARKET CLOSED';if(nextAt)next.textContent='Next scan: '+Math.max(0,Math.ceil((nextAt-Date.now())/1000))+'s'}setInterval(tick,1000);tick();
-function qtys(price){let b=+budget.value||0,r=+risk.value||0;let bq=Math.floor(b/price);let rq=Math.floor(r/(price*.01));return [bq,rq,Math.min(bq,rq)]}
-async function scan(){msg.textContent='Scanning…';try{let d=await (await fetch('/api/scan?x='+Date.now())).json();let ok=d.filter(x=>!x.error);stocks.textContent=ok.length;buys.textContent=ok.filter(x=>x.signal==='BUY').length;sells.textContent=ok.filter(x=>x.signal==='SELL').length;waits.textContent=ok.filter(x=>x.signal==='WAIT').length;let top=ok.filter(x=>x.signal==='BUY').sort((a,b)=>b.score-a.score)[0];topscore.textContent=top?top.score:'—';if(top){let [bq,rq,pq]=qtys(top.price),t=top.price*1.015,sl=top.price*.99;best.className='panel best';besttext.innerHTML='<b>🟢 BUY NOW — '+top.symbol+'</b> | Entry ₹'+top.price.toFixed(2)+' | Target ₹'+t.toFixed(2)+' | SL ₹'+sl.toFixed(2)+' | Budget Qty '+bq+' | Risk Qty '+rq+' | Plan Qty '+pq}else{best.className='panel none';besttext.textContent='⚪ WAIT — no confirmed high-quality BUY setup right now.'}
-let mode=document.getElementById('mode').value;let shown=ok.filter(x=>mode==='ALL STOCKS'||(mode==='BUY ONLY'&&x.signal==='BUY')||(mode==='SELL ONLY'&&x.signal==='SELL')||(mode==='WAIT ONLY'&&x.signal==='WAIT')).sort((a,b)=>b.score-a.score);rows.innerHTML=shown.map(x=>{let [bq,rq,pq]=qtys(x.price),t=x.price*1.015,sl=x.price*.99;return '<tr class="click" onclick="showChart(\\''+x.symbol+'\\')"><td><b>'+x.symbol+'</b></td><td>₹'+x.price+'</td><td>'+x.change+'%</td><td>'+x.rsi+'</td><td>₹'+x.vwap+'</td><td>₹'+x.ema9+'</td><td>₹'+x.ema21+'</td><td>'+x.volume.toLocaleString('en-IN')+'</td><td>'+x.score+'</td><td class="'+x.signal.toLowerCase()+'">'+x.signal+'</td><td>'+bq+'</td><td>'+rq+'</td><td>'+pq+'</td><td>'+(x.signal==='BUY'?'₹'+t.toFixed(2):'—')+'</td><td>'+(x.signal==='BUY'?'₹'+sl.toFixed(2):'—')+'</td></tr>'}).join('');let now=new Date().toLocaleTimeString('en-IN',{hour12:true});last.textContent='Last data update: '+now;nextAt=Date.now()+15000;msg.textContent='Updated '+ok.length+' stocks.';if(top){signalHistory.unshift({time:now,symbol:top.symbol,signal:'BUY',score:top.score,price:top.price});signalHistory=signalHistory.slice(0,20);historyEl()} }catch(e){msg.textContent='Data unavailable — check internet.'}}
-function historyEl(){historyElx=document.getElementById('history');historyElx.innerHTML=signalHistory.map(x=>'<tr><td>'+x.time+'</td><td>'+x.symbol+'</td><td class="buy">'+x.signal+'</td><td>'+x.score+'</td><td>₹'+x.price+'</td></tr>').join('')}
-async function showChart(s){chartTitle.textContent=s+' — 1 minute chart';try{let d=await (await fetch('/api/chart?symbol='+encodeURIComponent(s)+'&x='+Date.now())).json();draw(d.prices||[]);chartInfo.textContent='Chart update: '+new Date().toLocaleTimeString('en-IN',{hour12:true})}catch(e){draw([])}}
-function draw(a){let c=document.getElementById('chart'),ctx=c.getContext('2d'),W=c.clientWidth,H=c.clientHeight,r=devicePixelRatio||1;c.width=W*r;c.height=H*r;ctx.scale(r,r);ctx.clearRect(0,0,W,H);if(!a.length){ctx.fillStyle='#fff';ctx.fillText('Chart data unavailable',20,30);return}let mn=Math.min(...a),mx=Math.max(...a),p=25;ctx.beginPath();a.forEach((v,i)=>{let x=p+i*(W-2*p)/(a.length-1),y=H-p-(v-mn)/(mx-mn||1)*(H-2*p);i?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.strokeStyle='#65b7ff';ctx.lineWidth=2;ctx.stroke();ctx.fillStyle='#fff';ctx.fillText('Last ₹'+a[a.length-1].toFixed(2),10,20)}
+function tick(){let d=new Date();clock.textContent='🕐 '+d.toLocaleTimeString('en-IN',{hour12:true});date.textContent='📅 '+d.toLocaleDateString('en-IN');}
+setInterval(tick,1000);tick();
+function saveAlerts(){fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bot_token:bot.value.trim(),chat_id:chat.value.trim(),alerts:true})}).then(r=>r.json()).then(x=>msg.textContent=x.ok?'Alerts saved':'Save failed').catch(()=>msg.textContent='Save failed')}
+function testAlert(){fetch('/api/test').then(r=>r.json()).then(x=>msg.textContent=x.ok?'Telegram test sent':'Telegram test failed').catch(()=>msg.textContent='Telegram test failed')}
+function qty(p){let b=+budget.value||0;let riskv=+risk.value||0;let riskPer=Math.max(p*.01,.01);return {b:Math.max(0,Math.floor(b/p)),r:Math.max(0,Math.floor(riskv/riskPer))}}
+function render(data){let ok=data.filter(x=>!x.error);let modev=mode.value;let rows=data.filter(x=>!x.error).filter(x=>modev==='ALL STOCKS'||(modev==='BUY ONLY'&&x.signal==='BUY')||(modev==='SELL ONLY'&&x.signal==='SELL')||(modev==='WAIT ONLY'&&x.signal==='WAIT')).sort((a,b)=>b.score-a.score);stocks.textContent=ok.length;buys.textContent=ok.filter(x=>x.signal==='BUY').length;sells.textContent=ok.filter(x=>x.signal==='SELL').length;waits.textContent=ok.filter(x=>x.signal==='WAIT').length;source.textContent=ok.length?([...(new Set(ok.map(x=>x.source||'Market')))].join('/')):'—';topscore.textContent=ok.length?ok[0].score:'—';
+rows.innerHTML=rows.map(x=>{let q=qty(x.price);let plan=Math.min(q.b,q.r||q.b);let target=x.price*1.015,sl=x.price*.99;return `<tr class="click" onclick='showChart(${JSON.stringify(x)})'><td><b>${x.symbol}</b></td><td>₹${x.price}</td><td>${x.change}%</td><td>${x.rsi??'—'}</td><td>${x.vwap??'—'}</td><td>${x.ema9??'—'}</td><td>${x.ema21??'—'}</td><td>${x.volume||0}</td><td>${x.score}</td><td class="${x.signal.toLowerCase()}">${x.signal}</td><td>${q.b}</td><td>${q.r}</td><td>${plan}</td><td>₹${target.toFixed(2)}</td><td>₹${sl.toFixed(2)}</td></tr>`}).join('');
+let top=ok[0];if(top){best.className='panel '+(top.signal==='BUY'?'best':'none');besttext.innerHTML=top.signal==='BUY'?`🟢 <b>BUY WATCH/BUY</b> — ${top.symbol} at ₹${top.price}`:top.signal==='SELL'?`🔴 <b>SELL SETUP</b> — ${top.symbol} at ₹${top.price}`:`⚪ <b>WAIT</b> — strongest current stock: ${top.symbol} at ₹${top.price}`;reason.textContent=`Score ${top.score} • ${top.source||'Market data'}`}}
+function showChart(x){chartTitle.textContent='Stock Chart — '+x.symbol;chartInfo.textContent=`Price ₹${x.price} • Change ${x.change}% • Source ${x.source||'Market'}`;let c=chart,ctx=c.getContext('2d');c.width=c.clientWidth;c.height=c.clientHeight;ctx.clearRect(0,0,c.width,c.height);ctx.fillStyle='#fff';ctx.font='20px Arial';ctx.fillText(`${x.symbol}  ₹${x.price}`,20,40);ctx.font='14px Arial';ctx.fillText(`Change ${x.change}%  |  Signal ${x.signal}  |  Score ${x.score}`,20,70)}
+function scan(){msg.textContent='Scanning NSE…';fetch('/api/scan').then(r=>r.json()).then(x=>{render(x.data);last.textContent='Last data update: '+new Date().toLocaleTimeString('en-IN');nextAt=Date.now()+15000;msg.textContent=x.meta?`Scanned ${x.meta.ok}/${x.meta.total}`:`Scanned ${x.data.length}`;next.textContent='Next scan: 15s';}).catch(e=>{msg.textContent='Scan connection error';});}
+setInterval(()=>{if(nextAt){let s=Math.max(0,Math.ceil((nextAt-Date.now())/1000));next.textContent='Next scan: '+s+'s';if(s===0){nextAt=Date.now()+15000;scan()}}},1000);
+scan();
+</script></body></html>'''
 
-async function guide(){
- try{
-  let d=await (await fetch('/api/guide?x='+Date.now())).json();
-  if(d.settings){bot.value=d.settings.bot_token||localStorage.getItem('intraday_bot_token')||'';chat.value=d.settings.chat_id||localStorage.getItem('intraday_chat_id')||''; if(bot.value && chat.value && (!d.settings.bot_token || !d.settings.chat_id)){saveAlerts(true)}} else {bot.value=localStorage.getItem('intraday_bot_token')||'';chat.value=localStorage.getItem('intraday_chat_id')||''}
-  if(d.state==="PRE-OPEN"){best.className="panel none";besttext.innerHTML="🟡 <b>PRE-OPEN</b> — Do not buy yet.";reason.textContent="Wait for market confirmation after 9:15 AM."}
-  if(d.state==="CLOSED"){besttext.innerHTML="🔴 <b>MARKET CLOSED</b>";reason.textContent="Tomorrow the scanner will start automatically when the market opens."}
-  if(d.state==="OPEN" && d.guide.action==="BUY"){best.className="panel best";besttext.innerHTML="🟢 <b>BUY NOW — "+d.guide.symbol+"</b>";reason.textContent="Multiple confirmations passed. Check the scanner's Entry / Target / SL before placing any order."}
-  else if(d.state==="OPEN" && d.guide.action==="SELL"){best.className="panel warn";besttext.innerHTML="🔴 <b>SELL SETUP — "+d.guide.symbol+"</b>";reason.textContent="Bearish/short setup. This is not an EXIT signal for an existing long position."}
- }catch(e){}
-}
-async function saveAlerts(silent=false){localStorage.setItem('intraday_bot_token',bot.value);localStorage.setItem('intraday_chat_id',chat.value);await fetch('/api/save-alerts?bot_token='+encodeURIComponent(bot.value)+'&chat_id='+encodeURIComponent(chat.value));if(!silent)msg.textContent='Phone alerts saved.'}
-async function testAlert(){let d=await (await fetch('/api/test-alert?x='+Date.now())).json();msg.textContent=d.ok?'Test alert sent to phone.':'Telegram connection failed — check Bot Token and Chat ID.'}
-setInterval(guide,2000); guide();
-
-setInterval(scan,15000);scan();
-</script></body></html>"""
 
 class Handler(BaseHTTPRequestHandler):
-    def reply(self,code,body,ctype="text/html; charset=utf-8"):
-        b=body.encode("utf-8");self.send_response(code);self.send_header("Content-Type",ctype);self.send_header("Content-Length",str(len(b)));self.end_headers();self.wfile.write(b)
+    def log_message(self, format, *args):
+        return
+    def send_json(self, obj, code=200):
+        body=json.dumps(obj,ensure_ascii=False).encode()
+        self.send_response(code); self.send_header('Content-Type','application/json; charset=utf-8'); self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body)
     def do_GET(self):
-        u=urllib.parse.urlparse(self.path)
-        if u.path=="/": return self.reply(200,HTML)
-        if u.path=="/health": return self.reply(200,"ok","text/plain; charset=utf-8")
-        if u.path=="/api/scan": return self.reply(200,json.dumps(scan()),"application/json")
-        if u.path=="/api/chart":
-            s=urllib.parse.parse_qs(u.query).get("symbol",["RELIANCE"])[0]
-            try:
-                q=yahoo(s)["indicators"]["quote"][0]
-                return self.reply(200,json.dumps({"prices":[x for x in q.get("close",[]) if x is not None]}),"application/json")
-            except: return self.reply(200,'{"prices":[]}',"application/json")
-        if u.path=="/api/guide":
-            return self.reply(200,json.dumps({"state":market_state(),"guide":LAST_GUIDE,"settings":load_settings()}),"application/json")
-        if u.path=="/api/test-alert":
-            ok=telegram_send("🔔 Intraday AI TEST ALERT\nPhone alerts are connected.")
-            return self.reply(200,json.dumps({"ok":ok}),"application/json")
-        if u.path=="/api/save-alerts":
-            q=urllib.parse.parse_qs(u.query)
-            s={"bot_token":q.get("bot_token",[""])[0],"chat_id":q.get("chat_id",[""])[0],"alerts":True}
-            save_settings(s)
-            return self.reply(200,json.dumps({"ok":True}),"application/json")
-        return self.reply(404,"Not found")
+        if self.path in ('/','/index.html'):
+            body=HTML.encode(); self.send_response(200); self.send_header('Content-Type','text/html; charset=utf-8'); self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body); return
+        if self.path.startswith('/api/scan'):
+            data=scan(); ok=sum(1 for x in data if not x.get('error')); self.send_json({'data':data,'meta':{'ok':ok,'total':len(data)}}); return
+        if self.path.startswith('/api/test'):
+            self.send_json({'ok':telegram_send('✅ Intraday AI Telegram test successful.')}); return
+        if self.path.startswith('/api/settings'):
+            self.send_json(load_settings()); return
+        self.send_error(404)
+    def do_POST(self):
+        if self.path.startswith('/api/settings'):
+            n=int(self.headers.get('Content-Length','0') or 0); raw=self.rfile.read(n)
+            try: s=json.loads(raw.decode() or '{}')
+            except Exception: s={}
+            save_settings({'bot_token':str(s.get('bot_token','')).strip(),'chat_id':str(s.get('chat_id','')).strip(),'alerts':bool(s.get('alerts',True))})
+            self.send_json({'ok':True}); return
+        self.send_error(404)
 
-if __name__=="__main__":
-    port=int(os.environ.get("PORT","10000"))
-    host=os.environ.get("HOST","0.0.0.0")
-    server=ThreadingHTTPServer((host,port),Handler)
-    print(f"Intraday AI running on http://{host}:{port}/")
-    if os.environ.get("OPEN_BROWSER","0")=="1":
-        threading.Timer(1,lambda:webbrowser.open(f"http://127.0.0.1:{port}/")).start()
+
+def main():
+    port=int(os.environ.get('PORT','10000'))
+    server=ThreadingHTTPServer(('0.0.0.0',port),Handler)
+    print(f'Intraday AI running on port {port}',flush=True)
     server.serve_forever()
+
+if __name__=='__main__':
+    main()
