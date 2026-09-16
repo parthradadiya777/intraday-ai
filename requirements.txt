@@ -1,0 +1,2 @@
+# No third-party runtime packages are required.
+# Render can run this app directly with Python.
