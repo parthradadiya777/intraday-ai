@@ -1,36 +1,26 @@
-"""Startup hardening for the Render NSE scanner.
-Python imports sitecustomize automatically before app.py, so this safely patches
-small operational issues without replacing the working scanner code.
-"""
-import os
-
-APP = os.path.join(os.path.dirname(__file__), 'app.py')
+# Cloud-safe market-data fallback loaded automatically by Python on Render.
+import json, urllib.parse, urllib.request
 try:
-    s = open(APP, encoding='utf-8').read()
-    original = s
-
-    # NSE website endpoints are rate-limited; reuse a successful market snapshot
-    # longer than the browser's 60-second refresh cycle.
-    s = s.replace("time.time() - CACHE['ts'] < 45", "time.time() - CACHE['ts'] < 90")
-
-    # Reduce the expensive 5-minute confirmation calls from 30 to 12 most-active
-    # stocks. The complete NSE universe still gets live price/volume scanning.
-    s = s.replace("[:30]", "[:12]")
-    s = s.replace("ThreadPoolExecutor(max_workers=5)", "ThreadPoolExecutor(max_workers=3)")
-
-    # A temporary NSE throttle/network error must not erase the last good scan.
-    old = """            except Exception as e:\n                self.send_json({'ok': False, 'error': 'NSE data unavailable: ' + str(e)[:180]}, 503)\n            return\n"""
-    new = """            except Exception as e:\n                if CACHE.get('rows'):\n                    self.send_json({'ok': True, 'rows': CACHE['rows'], 'market': market_state(),\n                                    'time': now_ist().strftime('%I:%M:%S %p'), 'stale': True})\n                else:\n                    self.send_json({'ok': False, 'error': 'NSE data unavailable: ' + str(e)[:180]}, 503)\n            return\n"""
-    if old in s:
-        s = s.replace(old, new)
-
-    # Dynamic universe count in the browser message instead of the old 65-stock text.
-    s = s.replace("msg.textContent='Scanning NSE…'", "msg.textContent='Scanning complete NSE equity universe…'")
-    s = s.replace("msg.textContent=`Scanned ${d.rows.filter(x=>!x.error).length}/${d.rows.length} NSE equity stocks`", "msg.textContent=`Scanned ${d.rows.filter(x=>!x.error).length}/${d.rows.length} NSE equity stocks`")
-    s = s.replace("nextAt=Date.now()+45000", "nextAt=Date.now()+60000")
-
-    if s != original:
-        open(APP, 'w', encoding='utf-8').write(s)
+    from nsemine import live as _live
+    _original_snapshot = _live.get_all_securities_live_snapshot
+    def _yahoo_snapshot():
+        base='https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved'
+        merged={}
+        for screen in ('most_actives','day_gainers','day_losers'):
+            q=urllib.parse.urlencode({'formatted':'false','lang':'en-US','region':'IN','scrIds':screen,'count':250})
+            req=urllib.request.Request(base+'?'+q,headers={'User-Agent':'Mozilla/5.0','Accept':'application/json'})
+            with urllib.request.urlopen(req,timeout=10) as r: obj=json.loads(r.read().decode('utf-8'))
+            result=(obj.get('finance') or {}).get('result') or []
+            for x in ((result[0].get('quotes') or []) if result else []):
+                sym=str(x.get('symbol','')).strip(); p=x.get('regularMarketPrice'); ch=x.get('regularMarketChangePercent')
+                if sym.endswith('.NS') and p is not None and ch is not None:
+                    merged[sym[:-3]]={'symbol':sym[:-3],'series':'EQ','close':float(p),'changepct':float(ch),'volume':int(x.get('regularMarketVolume') or 0)}
+        if not merged: raise RuntimeError('Yahoo fallback returned no NSE rows')
+        import pandas as pd
+        return pd.DataFrame(list(merged.values()))
+    def _snapshot(*args,**kwargs):
+        try: return _original_snapshot(*args,**kwargs)
+        except Exception: return _yahoo_snapshot()
+    _live.get_all_securities_live_snapshot=_snapshot
 except Exception:
-    # Never prevent the application from starting because of this hardening file.
     pass
