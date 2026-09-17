@@ -1,5 +1,4 @@
 import os
-import re
 
 # Render runs this launcher so we can apply small compatibility patches while
 # keeping the scanner/market-data implementation in app_auto.py intact.
@@ -27,14 +26,21 @@ new_alert = '''def alert_once(key, text):
 if old_alert in source:
     source = source.replace(old_alert, new_alert, 1)
 
-# Make Telegram errors visible to the TEST PHONE button without exposing the token.
-source = re.sub(
-    r"(def telegram\(text\):.*?\n    except Exception:)\n        return False",
-    r"\1 as e:\n        STATE['last_error'] = 'Telegram error: ' + str(e)[:180]\n        return False",
-    source,
-    count=1,
-    flags=re.S,
-)
+# Make Telegram errors visible to TEST PHONE without exposing the token.
+old_tg_error = '''    except Exception:
+        return False
+
+
+def ema'''
+new_tg_error = '''    except Exception as e:
+        STATE['last_error'] = 'Telegram error: ' + str(e)[:180]
+        return False
+
+
+def ema'''
+if old_tg_error in source:
+    source = source.replace(old_tg_error, new_tg_error, 1)
+
 source = source.replace(
     "ok=telegram('✅ Intraday AI test alert — Telegram is connected.'); self.send_json({'ok':ok}); return",
     "ok=telegram('✅ Intraday AI test alert — Telegram is connected.'); self.send_json({'ok':ok,'error': '' if ok else STATE.get('last_error','Telegram send failed')}); return",
@@ -47,13 +53,12 @@ replacement = "['budget','risk','maxtrades'].forEach(id=>$(id).addEventListener(
 if needle in source:
     source = source.replace(needle, replacement, 1)
 
-# Show the actual Telegram API error in the page instead of a generic failure.
 old_test = "async function testAlert(){let r=await fetch('/api/test');let j=await r.json();$('msg').textContent=j.ok?'Test sent':'Test failed — check Telegram token/chat ID'}"
 new_test = "async function testAlert(){let r=await fetch('/api/test');let j=await r.json();$('msg').textContent=j.ok?'Test sent ✅':('Telegram failed: '+(j.error||'check Bot Token and Chat ID'))}"
 if old_test in source:
     source = source.replace(old_test, new_test, 1)
 
-# Inject the new ML decision engine into the app process.
+# Inject the ML decision engine into the app process.
 source = "from ai_engine import analyze as ai_analyze\n" + source
 
 # Replace the old rule-only technical scorer with the ML engine.
@@ -76,19 +81,15 @@ new_technical = '''def technical(symbol):
 '''
 source = re.sub(r"def technical\(symbol\):.*?\n\ndef get_snapshot", new_technical + "\n\ndef get_snapshot", source, count=1, flags=re.S)
 
-# Do not create BUY/SELL signals from raw daily change alone. AI must confirm them.
+# Do not create BUY/SELL from daily change alone. AI must confirm them.
 source = source.replace(
     "x['signal'] = 'BUY' if ch >= 2 else 'SELL' if ch <= -2 else 'WAIT'",
     "x['signal'] = 'WAIT'",
     1,
 )
-source = source.replace(
-    "[:10]",
-    "[:12]",
-    1,
-)
+source = source.replace("[:10]", "[:12]", 1)
 
-# Use AI-derived target/stop and explain the signal in the alert.
+# Use AI-derived target/stop and explain the signal in alerts.
 source = source.replace(
     "alert_once('buy_' + x['symbol'], f\"🟢 BUY NOW\\n{x['symbol']}\\nPrice ₹{x['price']}\\nScore {x['score']}\\nTarget ₹{x['price']*1.015:.2f}\\nStop Loss ₹{x['price']*.99:.2f}\")",
     "alert_once('buy_' + x['symbol'], f\"🟢 AI BUY NOW\\n{x['symbol']}\\nPrice ₹{x['price']}\\nAI Confidence {x.get('ai_confidence','—')}%\\nTarget ₹{x.get('target',x['price']*1.015):.2f}\\nStop Loss ₹{x.get('sl',x['price']*.99):.2f}\\nModel {x.get('ai_model','AI')}\\nReason {x.get('ai_reason','')}\")",
@@ -100,7 +101,6 @@ source = source.replace(
     1,
 )
 
-# Make the UI show the AI confidence/model instead of hiding the prediction.
 source = source.replace(
     "<div class=\"sub\">NSE equity scanner • automatic monitoring • BUY / WAIT / SELL • position alerts</div>",
     "<div class=\"sub\">NSE equity scanner • ML prediction • BUY / WAIT / SELL • target & stop monitoring</div>",
@@ -116,16 +116,8 @@ source = source.replace(
     "<td>'+x.score+'</td><td>'+fmt(x.ai_confidence)+'%</td><td>'+fmt(x.ai_model)+'</td><td><span class=\"tag\">'+x.signal+'</span></td>",
     1,
 )
-source = source.replace(
-    "money(x.price*1.015)",
-    "money(x.target||x.price*1.015)",
-    1,
-)
-source = source.replace(
-    "money(x.price*.99)",
-    "money(x.sl||x.price*.99)",
-    1,
-)
+source = source.replace("money(x.price*1.015)", "money(x.target||x.price*1.015)", 1)
+source = source.replace("money(x.price*.99)", "money(x.sl||x.price*.99)", 1)
 source = source.replace(
     "Automatic system scans NSE with a low-frequency refresh to reduce rate limits. Strong BUY/SELL alerts are sent once per stock.",
     "AI system scans NSE, trains on recent 5-minute history for the strongest candidates, then confirms BUY/SELL only when the learned probability and live trend agree. Signals are probabilistic, not guaranteed.",
