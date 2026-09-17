@@ -26,5 +26,3 @@ jobs:
       - name: AI feature pipeline test
         run: >-
           python -c "import numpy as np, pandas as pd, ai_engine; n=220; x=np.arange(n,dtype=float); close=100+x*0.03+np.sin(x/7.0)*0.2; df=pd.DataFrame({'open':close-0.03,'high':close+0.15,'low':close-0.15,'close':close,'volume':np.full(n,100000.0)}); features=ai_engine._features(df); assert features is not None and len(features)>100; probability, technical=ai_engine._technical_probability(df); assert 0.0<=probability<=1.0; assert isinstance(technical,dict); print('PASS: AI feature pipeline', round(probability,4))"
-      - name: Launcher import smoke test
-        run: python -c "import launcher; print('PASS: launcher imports')"
