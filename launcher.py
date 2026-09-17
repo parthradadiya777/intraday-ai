@@ -41,9 +41,9 @@ source = source.replace(
     1,
 )
 
-# Update the budget/risk/Max Trades display immediately when the user types.
+# Budget/risk/Max Trades update immediately and persist as the user types.
 needle = "setInterval(state,15000);state();"
-replacement = "['budget','risk','maxtrades'].forEach(id=>$(id).addEventListener('input',()=>state()));setInterval(state,15000);state();"
+replacement = "['budget','risk','maxtrades'].forEach(id=>$(id).addEventListener('input',()=>{state();fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({budget:Number($('budget').value),risk:Number($('risk').value),max_trades:Number($('maxtrades').value)})})}));setInterval(state,15000);state();"
 if needle in source:
     source = source.replace(needle, replacement, 1)
 
@@ -53,11 +53,83 @@ new_test = "async function testAlert(){let r=await fetch('/api/test');let j=awai
 if old_test in source:
     source = source.replace(old_test, new_test, 1)
 
-# Save budget/risk/Max Trades as soon as any of those values changes, while
-# retaining the existing SAVE ALERTS button for Telegram credentials.
-old_listener = "['budget','risk','maxtrades'].forEach(id=>$(id).addEventListener('input',()=>state()));"
-new_listener = "['budget','risk','maxtrades'].forEach(id=>$(id).addEventListener('input',()=>{state();fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({budget:Number($('budget').value),risk:Number($('risk').value),max_trades:Number($('maxtrades').value)})})}));"
-if old_listener in source:
-    source = source.replace(old_listener, new_listener, 1)
+# Inject the new ML decision engine into the app process.
+source = "from ai_engine import analyze as ai_analyze\n" + source
+
+# Replace the old rule-only technical scorer with the ML engine.
+new_technical = '''def technical(symbol):
+    cached = STATE['technical_cache'].get(symbol)
+    if cached and time.time() - cached['ts'] < TECH_TTL:
+        return cached['data']
+    try:
+        df = live.get_stock_intraday_tick_by_tick_data(symbol, candle_interval=5)
+        if df is None or len(df) < 30:
+            return None
+        data = ai_analyze(symbol, df)
+        if not data:
+            return None
+        STATE['technical_cache'][symbol] = {'ts': time.time(), 'data': data}
+        return data
+    except Exception as e:
+        STATE['last_error'] = 'AI analysis: ' + str(e)[:140]
+        return None
+'''
+source = re.sub(r"def technical\(symbol\):.*?\n\ndef get_snapshot", new_technical + "\n\ndef get_snapshot", source, count=1, flags=re.S)
+
+# Do not create BUY/SELL signals from raw daily change alone. AI must confirm them.
+source = source.replace(
+    "x['signal'] = 'BUY' if ch >= 2 else 'SELL' if ch <= -2 else 'WAIT'",
+    "x['signal'] = 'WAIT'",
+    1,
+)
+source = source.replace(
+    "[:10]",
+    "[:12]",
+    1,
+)
+
+# Use AI-derived target/stop and explain the signal in the alert.
+source = source.replace(
+    "alert_once('buy_' + x['symbol'], f\"🟢 BUY NOW\\n{x['symbol']}\\nPrice ₹{x['price']}\\nScore {x['score']}\\nTarget ₹{x['price']*1.015:.2f}\\nStop Loss ₹{x['price']*.99:.2f}\")",
+    "alert_once('buy_' + x['symbol'], f\"🟢 AI BUY NOW\\n{x['symbol']}\\nPrice ₹{x['price']}\\nAI Confidence {x.get('ai_confidence','—')}%\\nTarget ₹{x.get('target',x['price']*1.015):.2f}\\nStop Loss ₹{x.get('sl',x['price']*.99):.2f}\\nModel {x.get('ai_model','AI')}\\nReason {x.get('ai_reason','')}\")",
+    1,
+)
+source = source.replace(
+    "alert_once('short_' + x['symbol'], f\"🔴 SELL SETUP\\n{x['symbol']}\\nPrice ₹{x['price']}\\nScore {x['score']}\\nTarget ₹{x['price']*.985:.2f}\\nStop Loss ₹{x['price']*1.01:.2f}\")",
+    "alert_once('short_' + x['symbol'], f\"🔴 AI SELL / SHORT SETUP\\n{x['symbol']}\\nPrice ₹{x['price']}\\nAI Confidence {x.get('ai_confidence','—')}%\\nTarget ₹{x.get('target',x['price']*.985):.2f}\\nStop Loss ₹{x.get('sl',x['price']*1.01):.2f}\\nModel {x.get('ai_model','AI')}\\nReason {x.get('ai_reason','')}\")",
+    1,
+)
+
+# Make the UI show the AI confidence/model instead of hiding the prediction.
+source = source.replace(
+    "<div class=\"sub\">NSE equity scanner • automatic monitoring • BUY / WAIT / SELL • position alerts</div>",
+    "<div class=\"sub\">NSE equity scanner • ML prediction • BUY / WAIT / SELL • target & stop monitoring</div>",
+    1,
+)
+source = source.replace(
+    "<th>Score</th><th>Signal</th>",
+    "<th>AI Score</th><th>AI Confidence</th><th>Model</th><th>Signal</th>",
+    1,
+)
+source = source.replace(
+    "<td>'+x.score+'</td><td><span class=\"tag\">'+x.signal+'</span></td>",
+    "<td>'+x.score+'</td><td>'+fmt(x.ai_confidence)+'%</td><td>'+fmt(x.ai_model)+'</td><td><span class=\"tag\">'+x.signal+'</span></td>",
+    1,
+)
+source = source.replace(
+    "money(x.price*1.015)",
+    "money(x.target||x.price*1.015)",
+    1,
+)
+source = source.replace(
+    "money(x.price*.99)",
+    "money(x.sl||x.price*.99)",
+    1,
+)
+source = source.replace(
+    "Automatic system scans NSE with a low-frequency refresh to reduce rate limits. Strong BUY/SELL alerts are sent once per stock.",
+    "AI system scans NSE, trains on recent 5-minute history for the strongest candidates, then confirms BUY/SELL only when the learned probability and live trend agree. Signals are probabilistic, not guaranteed.",
+    1,
+)
 
 exec(compile(source, path, 'exec'), {'__name__': '__main__', '__file__': path})
