@@ -17,7 +17,9 @@ jobs:
       - name: Install
         run: pip install -r requirements.txt
       - name: Syntax
-        run: python -m py_compile app.py
+        run: python -m py_compile app.py app_auto.py launcher.py ai_engine.py
+      - name: AI engine import
+        run: python -c "import ai_engine; print('PASS: AI engine imports')"
       - name: NSE live universe test
         run: |
           python - <<'PY'
