@@ -65,13 +65,8 @@ def scan():
                 x.update(snapshot_ai(x, max_volume))
             app_auto.AI_SNAPSHOT = {x['symbol']: x for x in rows}
 
-            # Pass 2: historical/live 5-minute AI refines the strongest 30 from the
-            # COMPLETE universe. These are not a fixed list and change with each scan.
-            candidates = sorted(
-                rows,
-                key=lambda x: (x['score'], abs(x['change']), x['volume']),
-                reverse=True,
-            )[:30]
+            # Pass 2: historical/live 5-minute AI refines the strongest 30 from the complete universe.
+            candidates = sorted(rows, key=lambda x: (x['score'], abs(x['change']), x['volume']), reverse=True)[:30]
             from concurrent.futures import ThreadPoolExecutor, as_completed
             with ThreadPoolExecutor(max_workers=3) as ex:
                 futures = {ex.submit(start.technical, x['symbol']): x for x in candidates}
@@ -97,14 +92,24 @@ def scan():
 
 app_auto.scan = scan
 
-# Budget is a decision constraint: recommendation cards only show stocks that can
-# actually be purchased with the entered budget. This makes changing the budget
-# meaningful without pretending that budget itself predicts price direction.
+# Make the existing clean UI comfortable on phones without changing desktop layout.
 try:
-    _html = app_auto.HTML
-    _old = "let rec=rows.filter(x=>x.signal==='BUY'||x.signal==='SELL').sort((a,b)=>Number(b.score)-Number(a.score)).slice(0,3);"
-    _new = "let rec=rows.filter(x=>(x.signal==='BUY'||x.signal==='SELL')&&qty(x)>0).sort((a,b)=>Number(b.score)-Number(a.score)).slice(0,3);"
-    app_auto.HTML = _html.replace(_old, _new)
+    _mobile = '''<style>
+@media (max-width: 700px){
+ body{font-size:14px;overflow-x:hidden}
+ header{padding:14px 12px;position:sticky;top:0;z-index:10}
+ h1{font-size:22px}.sub{font-size:12px}.status{margin-top:8px;gap:6px}.chip{padding:6px 8px;font-size:11px}
+ .wrap{padding:8px}.panel{padding:13px;border-radius:12px;margin-bottom:10px}
+ .controls{display:grid;grid-template-columns:1fr 1fr;gap:8px}.controls label{grid-column:1/-1;font-size:14px}
+ .controls input,.controls button{width:100%;min-height:44px}.controls button{grid-column:1/-1}
+ .hint{font-size:11px;line-height:1.4}
+ h2{font-size:19px;margin:4px 0 12px}
+ .recommend{grid-template-columns:1fr;gap:8px}.rec{padding:12px}.symbol{font-size:18px}.price{font-size:16px}.meta{font-size:12px}
+ table{min-width:850px}th,td{padding:9px 7px;font-size:12px}
+ .small{font-size:11px}
+}
+</style>'''
+    app_auto.HTML = app_auto.HTML.replace('</head>', _mobile + '</head>')
 except Exception:
     pass
 
