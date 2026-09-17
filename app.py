@@ -1,3 +1,3 @@
-# Compatibility entrypoint: run the AI-powered scanner through launcher.py.
-# This keeps deployments configured with `python app.py` on the AI version too.
-import launcher  # noqa: F401
+# Compatibility entrypoint for deployments that still run `python app.py`.
+# Use the full scanner/server so old Render start commands cannot fall back to the old UI.
+import server
