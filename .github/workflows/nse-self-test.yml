@@ -2,7 +2,8 @@ name: NSE Scanner Self Test
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
@@ -10,48 +11,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install
+      - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Syntax
+      - name: Syntax check
         run: python -m py_compile app.py app_auto.py launcher.py ai_engine.py
       - name: AI engine import
         run: python -c "import ai_engine; print('PASS: AI engine imports')"
-      - name: AI engine deterministic test
-        run: |
-          python - <<'PY'
-          import numpy as np
-          import pandas as pd
-          import ai_engine
-
-          n = 220
-          x = np.arange(n, dtype=float)
-          close = 100 + x * 0.03 + np.sin(x / 7.0) * 0.2
-          high = close + 0.15
-          low = close - 0.15
-          open_ = close - 0.03
-          volume = np.full(n, 100000.0)
-          df = pd.DataFrame({
-              'open': open_,
-              'high': high,
-              'low': low,
-              'close': close,
-              'volume': volume,
-          })
-
-          features = ai_engine._features(df)
-          assert features is not None and len(features) > 100
-          probability, technical = ai_engine._technical_probability(df)
-          assert 0.0 <= probability <= 1.0
-          assert isinstance(technical, dict)
-          print('PASS: AI feature pipeline')
-          print('TECHNICAL PROBABILITY:', round(probability, 4))
-          PY
+      - name: AI feature pipeline test
+        run: >-
+          python -c "import numpy as np, pandas as pd, ai_engine; n=220; x=np.arange(n,dtype=float); close=100+x*0.03+np.sin(x/7.0)*0.2; df=pd.DataFrame({'open':close-0.03,'high':close+0.15,'low':close-0.15,'close':close,'volume':np.full(n,100000.0)}); features=ai_engine._features(df); assert features is not None and len(features)>100; probability, technical=ai_engine._technical_probability(df); assert 0.0<=probability<=1.0; assert isinstance(technical,dict); print('PASS: AI feature pipeline', round(probability,4))"
       - name: Launcher import smoke test
-        run: python - <<'PY'
-          import launcher
-          print('PASS: launcher imports')
-          PY
+        run: python -c "import launcher; print('PASS: launcher imports')"
