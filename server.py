@@ -6,15 +6,11 @@ import start  # clean AI UI + technical engine
 
 
 def snapshot_ai(row, max_volume):
-    """Fast first-pass scoring for the complete NSE universe.
-    This is intentionally labelled AI-FALLBACK because it uses the live NSE snapshot.
-    Historical 5-minute ML is then used to refine a smaller set of the strongest names.
-    """
+    """Fast first-pass scoring for the complete NSE universe."""
     price = float(row.get('price', 0) or 0)
     change = float(row.get('change', 0) or 0)
     volume = float(row.get('volume', 0) or 0)
     volume_boost = min(8.0, (volume / max(max_volume, 1.0)) * 8.0)
-    # Momentum + participation, bounded to 0-100.
     score = max(0.0, min(100.0, 50.0 + change * 1.6 + volume_boost))
     confidence = max(50.0, min(78.0, 50.0 + abs(change) * 1.3 + volume_boost * 0.35))
     if change >= 5.0 and score >= 68.0:
@@ -26,22 +22,19 @@ def snapshot_ai(row, max_volume):
     target = price * (1.012 if signal == 'BUY' else 0.988) if signal in ('BUY', 'SELL') else None
     sl = price * (0.99 if signal == 'BUY' else 1.01) if signal in ('BUY', 'SELL') else None
     return {
-        'score': round(score, 1),
-        'signal': signal,
-        'ai_confidence': round(confidence, 1),
-        'ai_model': 'AI-FALLBACK',
+        'score': round(score, 1), 'signal': signal,
+        'ai_confidence': round(confidence, 1), 'ai_model': 'AI-FALLBACK',
         'ai_probability': round(score / 100.0, 4),
         'ai_direction': 'UP' if change >= 0 else 'DOWN',
         'target': round(target, 2) if target else None,
-        'sl': round(sl, 2) if sl else None,
-        'momentum': round(change, 3),
+        'sl': round(sl, 2) if sl else None, 'momentum': round(change, 3),
         'ai_validation': None,
         'ai_reason': 'Live NSE snapshot first-pass; 5-minute ML refinement applied to selected candidates',
     }
 
 
 def scan():
-    """Scan the complete NSE universe, then refine the strongest candidates with 5-minute ML."""
+    """Evaluate the complete NSE universe, then refine strongest candidates with 5-minute AI."""
     with app_auto.STATE['lock']:
         app_auto.STATE['scanning'] = True
         try:
@@ -66,17 +59,19 @@ def scan():
             if not rows:
                 raise RuntimeError('NSE returned no usable equity rows')
 
-            # FIRST PASS: every NSE stock is evaluated, so recommendations are not locked
-            # to a hard-coded/top-six list.
+            # Pass 1: ALL NSE stocks receive a live-snapshot AI score.
             max_volume = max((x['volume'] for x in rows), default=1)
             for x in rows:
                 x.update(snapshot_ai(x, max_volume))
             app_auto.AI_SNAPSHOT = {x['symbol']: x for x in rows}
 
-            # SECOND PASS: refine the strongest 30 universe-wide candidates with the
-            # historical/live 5-minute AI model. The universe selection remains all-NSE.
-            ranked = sorted(rows, key=lambda x: (x['score'], abs(x['change']), x['volume']), reverse=True)
-            candidates = ranked[:30]
+            # Pass 2: historical/live 5-minute AI refines the strongest 30 from the
+            # COMPLETE universe. These are not a fixed list and change with each scan.
+            candidates = sorted(
+                rows,
+                key=lambda x: (x['score'], abs(x['change']), x['volume']),
+                reverse=True,
+            )[:30]
             from concurrent.futures import ThreadPoolExecutor, as_completed
             with ThreadPoolExecutor(max_workers=3) as ex:
                 futures = {ex.submit(start.technical, x['symbol']): x for x in candidates}
@@ -88,7 +83,6 @@ def scan():
                     except Exception:
                         pass
 
-            # Re-rank the entire NSE universe after refinement.
             rows.sort(key=lambda x: (x['score'], abs(x['change']), x['volume']), reverse=True)
             app_auto.STATE['rows'] = rows
             app_auto.STATE['ts'] = time.time()
@@ -102,6 +96,17 @@ def scan():
 
 
 app_auto.scan = scan
+
+# Budget is a decision constraint: recommendation cards only show stocks that can
+# actually be purchased with the entered budget. This makes changing the budget
+# meaningful without pretending that budget itself predicts price direction.
+try:
+    _html = app_auto.HTML
+    _old = "let rec=rows.filter(x=>x.signal==='BUY'||x.signal==='SELL').sort((a,b)=>Number(b.score)-Number(a.score)).slice(0,3);"
+    _new = "let rec=rows.filter(x=>(x.signal==='BUY'||x.signal==='SELL')&&qty(x)>0).sort((a,b)=>Number(b.score)-Number(a.score)).slice(0,3);"
+    app_auto.HTML = _html.replace(_old, _new)
+except Exception:
+    pass
 
 if __name__ == '__main__':
     threading.Thread(target=app_auto.auto_loop, daemon=True).start()
