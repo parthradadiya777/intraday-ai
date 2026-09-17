@@ -13,21 +13,29 @@ def snapshot_ai(row, max_volume):
     volume_boost = min(8.0, (volume / max(max_volume, 1.0)) * 8.0)
     score = max(0.0, min(100.0, 50.0 + change * 1.6 + volume_boost))
     confidence = max(50.0, min(78.0, 50.0 + abs(change) * 1.3 + volume_boost * 0.35))
-    if change >= 5.0 and score >= 68.0:
+
+    # Less restrictive than the old +/-5% rule, while still requiring
+    # meaningful direction + score. This avoids an empty recommendation panel
+    # on ordinary market days without forcing a BUY/SELL when there is no setup.
+    if change >= 0.75 and score >= 65.0:
         signal = 'BUY'
-    elif change <= -5.0 and score <= 32.0:
+    elif change <= -0.75 and score <= 35.0:
         signal = 'SELL'
     else:
         signal = 'WAIT'
+
     target = price * (1.012 if signal == 'BUY' else 0.988) if signal in ('BUY', 'SELL') else None
     sl = price * (0.99 if signal == 'BUY' else 1.01) if signal in ('BUY', 'SELL') else None
     return {
-        'score': round(score, 1), 'signal': signal,
-        'ai_confidence': round(confidence, 1), 'ai_model': 'AI-FALLBACK',
+        'score': round(score, 1),
+        'signal': signal,
+        'ai_confidence': round(confidence, 1),
+        'ai_model': 'SNAPSHOT-AI',
         'ai_probability': round(score / 100.0, 4),
         'ai_direction': 'UP' if change >= 0 else 'DOWN',
         'target': round(target, 2) if target else None,
-        'sl': round(sl, 2) if sl else None, 'momentum': round(change, 3),
+        'sl': round(sl, 2) if sl else None,
+        'momentum': round(change, 3),
         'ai_validation': None,
         'ai_reason': 'Live NSE snapshot first-pass; 5-minute ML refinement applied to selected candidates',
     }
