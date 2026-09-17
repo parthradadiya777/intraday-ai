@@ -1,20 +1,19 @@
 # Intraday AI — Hosted
 
-NSE intraday scanner with BUY / SELL / WAIT guidance and Telegram alerts.
+NSE intraday scanner with AI/ML-based BUY / SELL / WAIT guidance, target/stop monitoring and Telegram alerts.
 
-## Deploy on Render
+## Deployment
 
-1. Upload these files to the `intraday-ai` GitHub repository.
-2. In Render: New → Web Service → select the GitHub repo.
-3. Render will use `render.yaml`, or set:
-   - Build Command: `python -m py_compile app.py`
-   - Start Command: `python app.py`
-4. A paid web service is required for the persistent disk used to retain settings across restarts. The disk is mounted at `/var/data`.
-5. Open the generated `onrender.com` URL.
-6. Enter Telegram Bot Token and Chat ID, click SAVE ALERTS, then TEST PHONE.
+Render uses `render.yaml` and starts the service with `python launcher.py`. The launcher loads the live NSE scanner and connects the AI engine in `ai_engine.py`.
 
-Do not commit Telegram tokens or other secrets to GitHub.
+## AI signal
+
+The AI layer uses recent 5-minute market history and a machine-learning probability model, with a technical fallback when historical training data is insufficient. Signals are probabilistic and are not guaranteed profit or automatic order instructions.
+
+## Alerts
+
+Telegram alerts can be configured from the web UI. Do not commit Telegram tokens or other secrets to GitHub.
 
 ## Data source
 
-This version uses Yahoo Finance chart data through its public web endpoint. It is not exchange-grade real-time market data and can be delayed or unavailable. Do not treat signals as guaranteed profit or as automatic order instructions.
+NSE data is accessed through the `nsemine` package. Availability and latency can vary because public/unofficial access may be rate-limited. Do not treat the feed as exchange-grade execution data.
