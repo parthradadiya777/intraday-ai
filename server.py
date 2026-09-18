@@ -780,11 +780,27 @@ class FastHandler(app_auto.Handler):
             if not symbol:self.send_json({'ok':False,'error':'Missing symbol'},400);return
             row=next((x for x in app_auto.STATE.get('rows',[]) if x.get('symbol','').upper()==symbol),None)
             if row is None:self.send_json({'ok':False,'error':'Stock not found in current NSE snapshot'},404);return
+            # Keep the stock-detail LTP/change exactly identical to the
+            # current scanner row. Technical refinement may use the latest
+            # completed 5-minute candle, which can otherwise differ from the
+            # live snapshot shown in the stock list.
             data=dict(row);refined=False
+            live_price=row.get('price')
+            live_change=row.get('change')
+            live_volume=row.get('volume')
             try:
                 tech=start.technical(symbol)
-                if tech:data.update(tech);refined=True
-            except Exception:pass
+                if tech:
+                    data.update(tech)
+                    refined=True
+                    if live_price is not None:
+                        data['price']=live_price
+                    if live_change is not None:
+                        data['change']=live_change
+                    if live_volume is not None:
+                        data['volume']=live_volume
+            except Exception:
+                pass
             self.send_json({'ok':True,'data':data,'refined':refined});return
 
         if path == '/api/nifty50':
