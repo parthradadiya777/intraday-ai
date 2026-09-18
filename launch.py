@@ -97,7 +97,7 @@ class LiveHandler(enhanced_server.EnhancedHandler):
 # the slower dedicated constituent endpoint and avoids creating a new candle
 # every second.
 html = server.app_auto.HTML
-
+\n# Hide the NIFTY 50 panel completely for the current scanner UI.\nhtml = html.replace("</head>", "<style>.nifty-panel{display:none!important}</style></head>", 1)\n
 old_nifty_start = "async function loadNifty50(){
   try{
     // One source of truth: the dedicated NIFTY 50 endpoint. It always
