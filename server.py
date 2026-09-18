@@ -308,27 +308,30 @@ def refresh_nifty_cache():
             if df is not None and len(df):
                 for _, r in df.iterrows():
                     sym=str(r.get('symbol','')).strip()
-                    if sym:
+                    if sym.upper() in NIFTY_SYMBOLS:
+                        price = r.get('ltp')
+                        if price is None:
+                            price = r.get('close')
                         rows_by_symbol[sym.upper()] = {
-                            'symbol':sym,'price':r.get('ltp'),'change':r.get('changepct'),
+                            'symbol':sym,'price':price,'change':r.get('changepct'),
                             'weightage':r.get('weightage'),'volume':r.get('volume'),
-                            'turnover':r.get('turnover')
+                            'turnover':r.get('turnover', r.get('traded_value'))
                         }
-            # Enrich missing NIFTY fields from the dedicated endpoint, but never
-            # make the browser wait for this slower request.
+            # Enrich missing NIFTY fields from the dedicated endpoint.
+            # Failure here is harmless because the main snapshot is already usable.
             try:
                 eq = live.get_index_constituents_live_snapshot('NIFTY 50')
             except Exception:
                 eq = None
-                if eq is not None and len(eq):
-                    for _, r in eq.iterrows():
-                        sym=str(r.get('symbol','')).strip()
-                        if sym.upper() in NIFTY_SYMBOLS and sym.upper() not in rows_by_symbol:
-                            rows_by_symbol[sym.upper()] = {
-                                'symbol':sym,'price':r.get('close'),'change':r.get('changepct'),
-                                'weightage':None,'volume':r.get('volume'),
-                                'turnover':r.get('traded_value')
-                            }
+            if eq is not None and len(eq):
+                for _, r in eq.iterrows():
+                    sym=str(r.get('symbol','')).strip()
+                    if sym.upper() in NIFTY_SYMBOLS:
+                        rows_by_symbol[sym.upper()] = {
+                            'symbol':sym,'price':r.get('ltp', r.get('close')),
+                            'change':r.get('changepct'),'weightage':r.get('weightage'),
+                            'volume':r.get('volume'),'turnover':r.get('turnover', r.get('traded_value'))
+                        }
             # Always render all 50 slots in the fixed NIFTY 50 order.
             # Missing live quotes are kept as placeholders instead of hiding the constituent.
             rows=[]
