@@ -41,6 +41,28 @@ def snapshot_ai(row, max_volume):
         'ai_reason': 'Live NSE snapshot; selected stocks get 5-minute AI refinement',
     }
 
+def _nse_nifty_snapshot():
+    """Fetch current NIFTY 50 bulk prices from NSE."""
+    headers = {'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/153 Safari/537.36',
+               'Accept':'application/json,text/plain,*/*',
+               'Referer':'https://www.nseindia.com/market-data/live-equity-market?key=NIFTY+50'}
+    sess = requests.Session(); sess.headers.update(headers)
+    sess.get('https://www.nseindia.com', timeout=8)
+    rr = sess.get('https://www.nseindia.com/api/equity-stockIndices', params={'index':'NIFTY 50'}, timeout=10)
+    rr.raise_for_status(); raw = rr.json()
+    data = raw.get('data',[]) if isinstance(raw,dict) else []
+    out=[]
+    for x in data:
+        sym=str(x.get('symbol') or '').strip().upper()
+        if not sym or sym in ('NIFTY 50','NIFTY50'): continue
+        price=x.get('lastPrice',x.get('ltp')); ch=x.get('pChange',x.get('percentChange'))
+        if price is None: continue
+        out.append({'symbol':sym,'price':round(float(price),2),'change':round(float(ch or 0),2),
+                    'volume':int(float(x.get('totalTradedVolume',x.get('volume') or 0) or 0)),
+                    'score':50.0,'signal':'WAIT','rsi':None,'ema9':None,'ema21':None,'momentum':None,
+                    'source':'NSE LIVE','ai_confidence':None,'ai_model':None,'target':None,'sl':None,
+                    'ai_validation':None,'ai_reason':None})
+    return out
 def scan():
     if app_auto.STATE.get('rows') and time.time() - app_auto.STATE.get('ts', 0) < 5:
         return app_auto.STATE.get('rows', [])
@@ -74,7 +96,12 @@ def scan():
                 except Exception:
                     continue
             if not rows:
-                raise RuntimeError('NSE returned no usable equity rows')
+                try:
+                    rows = _nse_nifty_snapshot()
+                except Exception:
+                    rows = []
+            if not rows:
+                return app_auto.STATE.get('rows', [])
 
             app_auto.STATE['progress'] = 20
             app_auto.STATE['progress_text'] = f'Scoring {len(rows)} NSE stocks…'
@@ -240,11 +267,13 @@ function renderState(j){
  $('bar').style.width=(j.progress||0)+'%';render();
 }
 async function state(){try{let r=await fetch('/api/state');renderState(await r.json())}catch(e){$('msg').textContent='Connection error'}}
+async function livePrices(){try{const r=await fetch('/api/live_nifty?t='+Date.now(),{cache:'no-store'});const j=await r.json();if(!j.ok||!j.rows||!j.rows.length)return;const by=Object.fromEntries(j.rows.map(x=>[String(x.symbol).toUpperCase(),x]));let changed=false;DATA=DATA.map(x=>{const q=by[String(x.symbol).toUpperCase()];if(!q)return x;changed=changed||Number(x.price)!==Number(q.price)||Number(x.change)!==Number(q.change);return {...x,price:q.price,change:q.change,volume:q.volume,source:'NSE LIVE'}});if(changed)render();$('msg').textContent='● LIVE NSE prices • '+new Date().toLocaleTimeString('en-IN')}catch(e){}}
+
 async function scanNow(){if(window.scanning)return;window.scanning=true;$('msg').innerHTML='<span class="spinner"></span> Starting fresh NSE scan…';try{await fetch('/api/scan?start=1')}catch(e){}let timer=setInterval(async()=>{await state();let r=await fetch('/api/state');let j=await r.json();if(!j.scanning){clearInterval(timer);window.scanning=false;renderState(j)}},700)}
 async function openStock(sym){sym=decodeURIComponent(sym);activeChartSymbol=sym;$('modal').style.display='flex';$('dtitle').textContent=sym;$('dsub').textContent='Loading latest stock data…';$('details').innerHTML='<div class="empty">Fetching…</div>';loadChart('5');loadOptions();try{let r=await fetch('/api/stock?symbol='+encodeURIComponent(sym));let j=await r.json();if(!j.ok)throw Error(j.error||'Failed');let x=j.data;$('dsub').textContent='NSE • '+(j.refined?'5-minute AI refined':'snapshot data');let items=[['Price',money(x.price)],['Change',val(x.change)+'%'],['AI Score',val(x.score)],['Signal',val(x.signal)],['Confidence',val(x.ai_confidence)+'%'],['Model',val(x.ai_model)],['RSI',val(x.rsi)],['EMA 9',money(x.ema9)],['EMA 21',money(x.ema21)],['VWAP',money(x.vwap)],['MACD',val(x.macd)],['MACD Signal',val(x.macd_signal)],['ADX',val(x.adx)],['Relative Volume',val(x.relative_volume)+'x'],['ATR',money(x.atr)],['Momentum',val(x.momentum)+'%'],['Volume',Number(x.volume||0).toLocaleString('en-IN')],['Target',money(x.target)],['Stop Loss',money(x.sl)]];$('details').innerHTML=items.map(a=>'<div class="detail"><b>'+a[0]+'</b><span>'+a[1]+'</span></div>').join('');$('dreason').textContent=x.ai_reason||'No additional AI explanation available.'}catch(e){$('details').innerHTML='<div class="empty">'+e.message+'</div>';$('dsub').textContent='Unable to load stock details'}}
 function closeModal(){$('modal').style.display='none';if(chartRefreshTimer){clearInterval(chartRefreshTimer);chartRefreshTimer=null}if(activeChart){try{activeChart.remove()}catch(e){}activeChart=null;activeCandleSeries=null;activeVolumeSeries=null;activeLineSeries=null;liveLinePoints=[]}}
 $('budget').addEventListener('input',()=>render());$('search').addEventListener('input',()=>{lastQuery=$('search').value;render()});
-state();setInterval(state,1000);
+state();setInterval(state,1000);livePrices();setInterval(livePrices,2000);
 
 let activeChartSymbol='', activeChart=null, activeCandleSeries=null, activeVolumeSeries=null, activeLineSeries=null;
 let liveLinePoints=[];
