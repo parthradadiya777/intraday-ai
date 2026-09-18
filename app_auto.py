@@ -44,6 +44,14 @@ def load_settings():
                 'budget': 5000, 'risk': 500, 'max_trades': 2}
 
 
+def _json_safe(v):
+    if isinstance(v, datetime): return v.isoformat()
+    if isinstance(v, dict): return {k:_json_safe(x) for k,x in v.items()}
+    if isinstance(v, list): return [_json_safe(x) for x in v]
+    if isinstance(v, tuple): return [_json_safe(x) for x in v]
+    return v
+
+
 def save_settings(x):
     old = load_settings()
     old.update(x)
@@ -257,7 +265,7 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         return
     def send_json(self, obj, code=200):
-        data = json.dumps(obj, ensure_ascii=False).encode()
+        data = json.dumps(_json_safe(obj), ensure_ascii=False).encode()
         self.send_response(code); self.send_header('Content-Type','application/json; charset=utf-8'); self.send_header('Content-Length',str(len(data))); self.end_headers(); self.wfile.write(data)
     def body(self):
         n = int(self.headers.get('Content-Length','0')); return json.loads(self.rfile.read(n) or b'{}')
