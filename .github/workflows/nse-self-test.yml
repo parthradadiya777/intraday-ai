@@ -20,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Syntax check
-        run: python -m py_compile app.py app_auto.py launcher.py ai_engine.py
+        run: python -m py_compile app.py app_auto.py launcher.py ai_engine.py start.py server.py
       - name: AI engine import
         run: python -c "import ai_engine; print('PASS: AI engine imports')"
       - name: AI feature pipeline test
