@@ -4,7 +4,7 @@ import time
 import urllib.parse
 import app_auto
 import start
-from nsemine import live
+from nsemine import live, historical
 
 # NIFTY50_DIRECT_PANEL
 
@@ -146,6 +146,14 @@ tr.stockrow{cursor:pointer}tr.stockrow:hover{background:#f6f9fc}.fit{color:#0783
 .spinner{display:inline-block;width:13px;height:13px;border:2px solid #cbd5e1;border-top-color:#111827;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px}@keyframes spin{to{transform:rotate(360deg)}}
 @media(max-width:900px){.recommend{grid-template-columns:1fr}.detailgrid{grid-template-columns:repeat(2,1fr)}.wrap{padding:10px}}
 @media(max-width:600px){header{padding:15px 12px}h1{font-size:23px}.panel{padding:13px}.controls input,.controls button,.search{width:100%;min-height:44px}.searchrow{display:grid;grid-template-columns:1fr}.recommend{grid-template-columns:1fr}.detailgrid{grid-template-columns:1fr 1fr}table{min-width:1000px}th,td{font-size:12px;padding:9px 7px}}
+
+<style>
+.chart-toolbar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:15px}
+.chart-toolbar button{padding:7px 10px;font-size:12px}
+#priceChart{width:100%;height:360px;margin-top:8px;border:1px solid #e2e7ed;border-radius:10px;overflow:hidden}
+.chart-note{font-size:11px;color:#687386;margin:6px 0 12px}
+@media(max-width:600px){#priceChart{height:300px}.chart-toolbar button{min-width:45px}}
+</style>
 </style></head>
 <body>
 <header><h1>Intraday AI</h1><div class="sub">NSE intraday AI scanner • multi-stock search • live recommendation</div>
@@ -174,7 +182,20 @@ tr.stockrow{cursor:pointer}tr.stockrow:hover{background:#f6f9fc}.fit{color:#0783
 
 <div id="modal" class="modal" onclick="if(event.target===this)closeModal()"><div class="modalbox">
 <div class="modalhead"><h2 id="dtitle">Stock</h2><button class="close" onclick="closeModal()">✕</button></div>
-<div id="dsub" class="small"></div><div id="details" class="detailgrid"></div>
+<div id="dsub" class="small"></div>
+<div class="chart-toolbar">
+  <b>📈 Price Chart</b>
+  <button onclick="loadChart('1')">1m</button>
+  <button onclick="loadChart('5')">5m</button>
+  <button onclick="loadChart('15')">15m</button>
+  <button onclick="loadChart('30')">30m</button>
+  <button onclick="loadChart('60')">1h</button>
+  <button onclick="loadChart('D')">1D</button>
+</div>
+<div id="chartStatus" class="small">Loading chart…</div>
+<div id="priceChart"></div>
+<div class="chart-note">Candlestick + volume • NSE historical data</div>
+<div id="details" class="detailgrid"></div>
 <div id="dreason" class="hint" style="margin-top:15px"></div></div></div>
 
 <script>
@@ -201,7 +222,7 @@ function renderState(j){
 }
 async function state(){try{let r=await fetch('/api/state');renderState(await r.json())}catch(e){$('msg').textContent='Connection error'}}
 async function scanNow(){if(window.scanning)return;window.scanning=true;$('msg').innerHTML='<span class="spinner"></span> Starting fresh NSE scan…';try{await fetch('/api/scan?start=1')}catch(e){}let timer=setInterval(async()=>{await state();let r=await fetch('/api/state');let j=await r.json();if(!j.scanning){clearInterval(timer);window.scanning=false;renderState(j)}},700)}
-async function openStock(sym){sym=decodeURIComponent(sym);$('modal').style.display='flex';$('dtitle').textContent=sym;$('dsub').textContent='Loading latest stock data…';$('details').innerHTML='<div class="empty">Fetching…</div>';try{let r=await fetch('/api/stock?symbol='+encodeURIComponent(sym));let j=await r.json();if(!j.ok)throw Error(j.error||'Failed');let x=j.data;$('dsub').textContent='NSE • '+(j.refined?'5-minute AI refined':'snapshot data');let items=[['Price',money(x.price)],['Change',val(x.change)+'%'],['AI Score',val(x.score)],['Signal',val(x.signal)],['Confidence',val(x.ai_confidence)+'%'],['Model',val(x.ai_model)],['RSI',val(x.rsi)],['EMA 9',money(x.ema9)],['EMA 21',money(x.ema21)],['VWAP',money(x.vwap)],['MACD',val(x.macd)],['MACD Signal',val(x.macd_signal)],['ADX',val(x.adx)],['Relative Volume',val(x.relative_volume)+'x'],['ATR',money(x.atr)],['Momentum',val(x.momentum)+'%'],['Volume',Number(x.volume||0).toLocaleString('en-IN')],['Target',money(x.target)],['Stop Loss',money(x.sl)]];$('details').innerHTML=items.map(a=>'<div class="detail"><b>'+a[0]+'</b><span>'+a[1]+'</span></div>').join('');$('dreason').textContent=x.ai_reason||'No additional AI explanation available.'}catch(e){$('details').innerHTML='<div class="empty">'+e.message+'</div>';$('dsub').textContent='Unable to load stock details'}}
+async function openStock(sym){sym=decodeURIComponent(sym);activeChartSymbol=sym;$('modal').style.display='flex';$('dtitle').textContent=sym;$('dsub').textContent='Loading latest stock data…';$('details').innerHTML='<div class="empty">Fetching…</div>';loadChart('5');try{let r=await fetch('/api/stock?symbol='+encodeURIComponent(sym));let j=await r.json();if(!j.ok)throw Error(j.error||'Failed');let x=j.data;$('dsub').textContent='NSE • '+(j.refined?'5-minute AI refined':'snapshot data');let items=[['Price',money(x.price)],['Change',val(x.change)+'%'],['AI Score',val(x.score)],['Signal',val(x.signal)],['Confidence',val(x.ai_confidence)+'%'],['Model',val(x.ai_model)],['RSI',val(x.rsi)],['EMA 9',money(x.ema9)],['EMA 21',money(x.ema21)],['VWAP',money(x.vwap)],['MACD',val(x.macd)],['MACD Signal',val(x.macd_signal)],['ADX',val(x.adx)],['Relative Volume',val(x.relative_volume)+'x'],['ATR',money(x.atr)],['Momentum',val(x.momentum)+'%'],['Volume',Number(x.volume||0).toLocaleString('en-IN')],['Target',money(x.target)],['Stop Loss',money(x.sl)]];$('details').innerHTML=items.map(a=>'<div class="detail"><b>'+a[0]+'</b><span>'+a[1]+'</span></div>').join('');$('dreason').textContent=x.ai_reason||'No additional AI explanation available.'}catch(e){$('details').innerHTML='<div class="empty">'+e.message+'</div>';$('dsub').textContent='Unable to load stock details'}}
 function closeModal(){$('modal').style.display='none'}
 $('budget').addEventListener('input',()=>render());$('search').addEventListener('input',()=>{lastQuery=$('search').value;render()});
 state();setInterval(state,1500);
@@ -227,6 +248,40 @@ async function loadNifty50Direct(){
 }
 $('niftySearch').addEventListener('input',renderNifty50);
 loadNifty50Direct();setInterval(loadNifty50Direct,15000);
+
+let activeChartSymbol='', activeChart=null, activeCandleSeries=null, activeVolumeSeries=null;
+async function loadChart(interval='5'){
+  if(!activeChartSymbol)return;
+  $('chartStatus').textContent='Loading '+interval+' chart…';
+  try{
+    const r=await fetch('/api/chart?symbol='+encodeURIComponent(activeChartSymbol)+'&interval='+encodeURIComponent(interval));
+    const j=await r.json();
+    if(!j.ok)throw Error(j.error||'Chart unavailable');
+    const el=$('priceChart');
+    if(activeChart){try{activeChart.remove()}catch(e){}}
+    activeChart=LightweightCharts.createChart(el,{
+      width:el.clientWidth,height:el.clientHeight,
+      layout:{background:{color:'#ffffff'},textColor:'#687386'},
+      grid:{vertLines:{color:'#edf0f4'},horzLines:{color:'#edf0f4'}},
+      rightPriceScale:{borderColor:'#dce2e8'},
+      timeScale:{borderColor:'#dce2e8',timeVisible:true,secondsVisible:false},
+      crosshair:{mode:1}
+    });
+    activeCandleSeries=activeChart.addCandlestickSeries({
+      upColor:'#16a34a',downColor:'#dc2626',borderVisible:false,
+      wickUpColor:'#16a34a',wickDownColor:'#dc2626'
+    });
+    activeCandleSeries.setData(j.rows.map(x=>({time:x.time,open:x.open,high:x.high,low:x.low,close:x.close})));
+    activeVolumeSeries=activeChart.addHistogramSeries({
+      priceFormat:{type:'volume'},priceScaleId:'volume',
+      scaleMargins:{top:0.82,bottom:0}
+    });
+    activeVolumeSeries.setData(j.rows.map(x=>({time:x.time,value:x.volume,color:x.close>=x.open?'#86efac':'#fca5a5'})));
+    activeChart.timeScale().fitContent();
+    $('chartStatus').textContent=(j.rows.length)+' candles • '+interval+' timeframe';
+    window.addEventListener('resize',()=>{if(activeChart)activeChart.resize(el.clientWidth,el.clientHeight)});
+  }catch(e){$('chartStatus').textContent='Chart error: '+e.message}
+}
 </script></body></html>'''
 
 
@@ -301,6 +356,49 @@ class FastHandler(app_auto.Handler):
                 'scanning':app_auto.STATE.get('scanning',False),'progress':app_auto.STATE.get('progress',0),
                 'progress_text':app_auto.STATE.get('progress_text',''),'scan_id':app_auto.STATE.get('scan_id',0),
                 'settings':{'auto':s.get('auto',True)}}); return
+
+        if path == '/api/chart':
+            qs = urllib.parse.parse_qs(query)
+            symbol = (qs.get('symbol', [''])[0] or '').upper().strip()
+            interval_raw = (qs.get('interval', ['5'])[0] or '5').upper().strip()
+            if not symbol:
+                self.send_json({'ok': False, 'error': 'Missing symbol'}, 400); return
+            try:
+                if interval_raw in ('D','W','M'):
+                    interval = interval_raw
+                    days = 500 if interval == 'D' else 1500
+                else:
+                    interval = int(interval_raw)
+                    if interval not in (1,3,5,10,15,30,60):
+                        interval = 5
+                    days = 7 if interval <= 15 else 30
+                end = __import__('datetime').datetime.now()
+                start_dt = end - __import__('datetime').timedelta(days=days)
+                df = historical.get_stock_historical_data(symbol, start_dt, end, interval=interval)
+                if df is None or len(df) == 0:
+                    self.send_json({'ok': False, 'error': 'No chart data available'}, 404); return
+                cols = {str(x).lower().strip(): x for x in df.columns}
+                def pick(name, default=None):
+                    col = cols.get(name)
+                    return df[col] if col is not None else default
+                out = []
+                for idx, row in df.iterrows():
+                    try:
+                        o = float(row[cols['open']]); h = float(row[cols['high']])
+                        lo = float(row[cols['low']]); cl = float(row[cols['close']])
+                        vol = float(row[cols['volume']]) if 'volume' in cols else 0
+                        ts = idx
+                        if hasattr(ts, 'timestamp'):
+                            t = int(ts.timestamp())
+                        else:
+                            t = int(__import__('datetime').datetime.fromisoformat(str(ts)).timestamp())
+                        out.append({'time': t, 'open': o, 'high': h, 'low': lo, 'close': cl, 'volume': vol})
+                    except Exception:
+                        continue
+                self.send_json({'ok': True, 'symbol': symbol, 'interval': str(interval), 'rows': out[-1500:]})
+            except Exception as e:
+                self.send_json({'ok': False, 'error': str(e)[:180]}, 503)
+            return
         if path == '/api/stock':
             qs=urllib.parse.parse_qs(query); symbol=(qs.get('symbol',[''])[0] or '').upper().strip()
             if not symbol:self.send_json({'ok':False,'error':'Missing symbol'},400);return
