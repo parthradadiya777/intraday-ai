@@ -101,6 +101,20 @@ def scan():
                     done += 1
                     app_auto.STATE['progress'] = 35 + int(done / len(candidates) * 55)
                     app_auto.STATE['progress_text'] = f'AI refinement {done}/{len(candidates)}…'
+            # Add option-chain context to the strongest F&O candidates.
+            for x in candidates[:5]:
+                try:
+                    ob=option_bias(x['symbol'])
+                    if ob:
+                        x.update(ob)
+                        x['score']=round(max(0.0,min(100.0,float(x.get('score',50))+float(ob.get('option_bias',0)))),1)
+                        if x.get('signal')=='WAIT' and x['score']>=67:
+                            x['signal']='BUY'
+                        elif x.get('signal')=='WAIT' and x['score']<=33:
+                            x['signal']='SELL'
+                        x['ai_reason']=(x.get('ai_reason') or '')+' • Option-chain PCR included'
+                except Exception:
+                    pass
 
             rows.sort(key=lambda x: (x['score'], x['signal'] != 'WAIT', abs(x['change']), x['volume']), reverse=True)
             app_auto.STATE['rows'] = rows
@@ -505,6 +519,33 @@ def _nse_option_chain(symbol):
                                   'pcr':pcr,'rows':selected,'source':'NSE option chain'})
     except Exception as e:
         return {'ok':False,'error':str(e)[:180]}
+
+OPTION_CACHE={}
+OPTION_CACHE_LOCK=threading.Lock()
+OPTION_TTL=60
+
+def option_bias(symbol):
+    now=time.time()
+    with OPTION_CACHE_LOCK:
+        hit=OPTION_CACHE.get(symbol)
+        if hit and now-hit['ts']<OPTION_TTL:
+            return hit['data']
+    try:
+        j=_nse_option_chain(symbol)
+        if not j.get('ok'):
+            return None
+        pcr=j.get('pcr')
+        bias=0.0
+        if pcr is not None:
+            if pcr >= 1.20: bias=5.0
+            elif pcr >= 1.05: bias=2.5
+            elif pcr <= 0.80: bias=-5.0
+            elif pcr <= 0.95: bias=-2.5
+        data={'option_pcr':pcr,'option_bias':bias,'option_expiry':j.get('expiry'),'option_atm':j.get('atm')}
+        with OPTION_CACHE_LOCK: OPTION_CACHE[symbol]={'ts':now,'data':data}
+        return data
+    except Exception:
+        return None
 
 class FastHandler(app_auto.Handler):
     def send_json(self, obj, code=200):
