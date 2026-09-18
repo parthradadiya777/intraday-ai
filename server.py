@@ -219,28 +219,6 @@ function closeModal(){$('modal').style.display='none'}
 $('budget').addEventListener('input',()=>render());$('search').addEventListener('input',()=>{lastQuery=$('search').value;render()});
 state();setInterval(state,1500);
 
-let NIFTY50_DIRECT=[];
-function niftyMoney(v){return v==null?'—':'₹'+Number(v).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});}
-function renderNifty50(){
- const q=($('niftySearch').value||'').trim().toUpperCase();
- const a=NIFTY50_DIRECT.filter(x=>!q||x.symbol.toUpperCase().includes(q));
- $('niftyInfo').textContent='Showing '+a.length+' of '+NIFTY50_DIRECT.length+' NIFTY 50 stocks';
- $('niftyRows').innerHTML=a.map(x=>{
-  const ch=x.change==null?null:Number(x.change);
-  return '<tr class="stockrow"><td><b>'+x.symbol+'</b></td><td>'+niftyMoney(x.price)+'</td><td class="'+(ch!=null&&ch>=0?'green':'red')+'">'+(ch==null?'—':(ch>=0?'+':'')+ch.toFixed(2)+'%')+'</td><td>'+(x.weightage==null?'—':Number(x.weightage).toFixed(2)+'%')+'</td><td>'+(x.volume==null?'—':Number(x.volume).toLocaleString('en-IN'))+'</td><td>'+(x.turnover==null?'—':Number(x.turnover).toLocaleString('en-IN'))+'</td></tr>';
- }).join('')||'<tr><td colspan="6" class="empty">No matching NIFTY 50 stock.</td></tr>';
-}
-async function loadNifty50Direct(){
- try{
-  const [ir,cr]=await Promise.all([fetch('/api/nifty50/index'),fetch('/api/nifty50')]);
-  const ij=await ir.json(),cj=await cr.json();
-  if(ij.ok){const d=ij.data,ch=Number(d.change||0);$('niftyIndex').innerHTML='<b style="font-size:22px">NIFTY 50 '+niftyMoney(d.price)+'</b> <span class="'+(ch>=0?'green':'red')+'" style="font-size:18px;font-weight:800;margin-left:12px">'+(ch>=0?'+':'')+ch.toFixed(2)+'%</span><div class="small" style="margin-top:6px">Open '+niftyMoney(d.open)+' · High '+niftyMoney(d.high)+' · Low '+niftyMoney(d.low)+' · Prev '+niftyMoney(d.previous_close)+'</div>';}
-  if(cj.ok){NIFTY50_DIRECT=cj.rows||[];renderNifty50();} else $('niftyRows').innerHTML='<tr><td colspan="6" class="empty">'+(cj.error||'NIFTY 50 unavailable')+'</td></tr>';
- }catch(e){$('niftyIndex').textContent='NIFTY 50 data unavailable';}
-}
-$('niftySearch').addEventListener('input',renderNifty50);
-loadNifty50Direct();setInterval(loadNifty50Direct,15000);
-
 let activeChartSymbol='', activeChart=null, activeCandleSeries=null, activeVolumeSeries=null;
 async function loadChart(interval='5'){
   if(!activeChartSymbol)return;
@@ -289,6 +267,8 @@ NIFTY_SYMBOLS = [
     'SBILIFE','SBIN','SHRIRAMFIN','SUNPHARMA','TATACONSUM','TATASTEEL','TCS','TECHM',
     'TITAN','TRENT','ULTRACEMCO','WIPRO'
 ]
+NIFTY_CACHE['rows'] = [{'symbol': s, 'price': None, 'change': None, 'weightage': None, 'volume': None, 'turnover': None} for s in NIFTY_SYMBOLS]
+NIFTY_CACHE['error'] = 'Live NIFTY 50 quotes are not published yet; showing all 50 constituents'
 
 def refresh_nifty_cache():
     while True:
