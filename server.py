@@ -77,9 +77,9 @@ def scan():
             df = app_auto.get_snapshot().copy()
             df['symbol'] = df['symbol'].astype(str).str.strip()
             df = df.drop_duplicates('symbol')
-            # Product scope: only NIFTY 50 constituents.
-            nifty_set = set(NIFTY_SYMBOLS)
-            df = df[df['symbol'].map(lambda s: _clean_nifty_symbol(s) in nifty_set)].copy()
+            # Full NSE equity universe: keep every currently returned EQ
+            # security instead of restricting the scanner to NIFTY 50.
+            # NIFTY 50 is still used separately for market-context confirmation.
             rows = []
             for _, r in df.iterrows():
                 try:
@@ -105,7 +105,7 @@ def scan():
                 return app_auto.STATE.get('rows', [])
 
             app_auto.STATE['progress'] = 20
-            app_auto.STATE['progress_text'] = f'Scoring {len(rows)} NSE stocks…'
+            app_auto.STATE['progress_text'] = f'Scoring {len(rows)} NSE equity stocks…'
             max_volume = max((x['volume'] for x in rows), default=1)
             for x in rows:
                 x.update(snapshot_ai(x, max_volume))
@@ -164,7 +164,7 @@ def scan():
             app_auto.STATE['last_error'] = ''
             app_auto.STATE['scan_id'] = int(app_auto.STATE.get('scan_id', 0)) + 1
             app_auto.STATE['progress'] = 100
-            app_auto.STATE['progress_text'] = f'Complete • {len(rows)} NSE stocks scanned'
+            app_auto.STATE['progress_text'] = f'Complete • {len(rows)} NSE equity stocks scanned'
             return rows
         except Exception as e:
             app_auto.STATE['last_error'] = str(e)[:160]
