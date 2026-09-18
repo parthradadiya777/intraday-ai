@@ -281,14 +281,26 @@ NIFTY_LOCK = threading.Lock()
 NIFTY_SYMBOLS = [
     'ADANIENT','ADANIPORTS','APOLLOHOSP','ASIANPAINT','AXISBANK','BAJAJ-AUTO',
     'BAJAJFINSV','BAJFINANCE','BEL','BHARTIARTL','CIPLA','COALINDIA','DRREDDY',
-    'EICHERMOT','ETERNAL','GRASIM','HCLTECH','HDFCBANK','HDFCLIFE','HINDALCO',
-    'HINDUNILVR','ICICIBANK','INDIGO','INFY','ITC','JIOFIN','JSWSTEEL','KOTAKBANK',
-    'LT','M&M','MARUTI','MAXHEALTH','NESTLEIND','NTPC','ONGC','POWERGRID','RELIANCE',
-    'SBILIFE','SBIN','SHRIRAMFIN','SUNPHARMA','TATACONSUM','TATASTEEL','TCS','TECHM',
-    'TITAN','TRENT','ULTRACEMCO','WIPRO'
+    'EICHERMOT','ETERNAL','GRASIM','HCLTECH','HDFCBANK','HDFCLIFE','HEROMOTOCO',
+    'HINDALCO','HINDUNILVR','ICICIBANK','INDUSINDBK','INFY','ITC','JIOFIN','JSWSTEEL',
+    'KOTAKBANK','LT','M&M','MARUTI','NESTLEIND','NTPC','ONGC','POWERGRID','RELIANCE',
+    'SBILIFE','SBIN','SHRIRAMFIN','SUNPHARMA','TATACONSUM','TATAMOTORS','TATASTEEL',
+    'TCS','TECHM','TITAN','TRENT','ULTRACEMCO','WIPRO'
 ]
 NIFTY_CACHE['rows'] = [{'symbol': s, 'price': None, 'change': None, 'weightage': None, 'volume': None, 'turnover': None} for s in NIFTY_SYMBOLS]
 NIFTY_CACHE['error'] = 'Live NIFTY 50 quotes are not published yet; showing all 50 constituents'
+
+def _clean_nifty_symbol(value):
+    """Normalize NSE feed symbols so suffix/prefix variants still match NIFTY."""
+    s = str(value or '').strip().upper()
+    for prefix in ('NSE:', 'NSE_'):
+        if s.startswith(prefix):
+            s = s[len(prefix):]
+    for suffix in ('-EQ', '.NS'):
+        if s.endswith(suffix):
+            s = s[:-len(suffix)]
+    return s
+
 
 def refresh_nifty_cache():
     while True:
@@ -302,7 +314,7 @@ def refresh_nifty_cache():
             try:
                 current = app_auto.STATE.get('rows', []) or []
                 for r in current:
-                    sym = str(r.get('symbol','')).strip().upper()
+                    sym = _clean_nifty_symbol(r.get('symbol'))
                     if sym in NIFTY_SYMBOLS:
                         rows_by_symbol[sym] = {
                             'symbol': sym,
@@ -324,7 +336,7 @@ def refresh_nifty_cache():
                     df = None
                 if df is not None and len(df):
                     for _, r in df.iterrows():
-                        sym = str(r.get('symbol','')).strip().upper()
+                        sym = _clean_nifty_symbol(r.get('symbol'))
                         if sym in NIFTY_SYMBOLS:
                             rows_by_symbol[sym] = {
                                 'symbol': sym,
@@ -576,15 +588,14 @@ class NiftyHandler(FastHandler):
     def do_GET(self):
         path, _, query = self.path.partition('?')
         if path == '/api/nifty50':
-            # Serve NIFTY stocks directly from the main scanner state on every
-            # request. This removes any dependency on the background NIFTY
-            # refresh thread and guarantees the panel can render as soon as
-            # the main scanner has NSE rows.
+            # Fast path: use the main scanner snapshot already held in memory.
+            # Normalize NSE symbol variants such as NSE:RELIANCE, RELIANCE-EQ
+            # and RELIANCE.NS before matching.
             rows_by_symbol = {}
             try:
                 current = app_auto.STATE.get('rows', []) or []
                 for r in current:
-                    sym = str(r.get('symbol','')).strip().upper()
+                    sym = _clean_nifty_symbol(r.get('symbol'))
                     if sym in NIFTY_SYMBOLS:
                         rows_by_symbol[sym] = {
                             'symbol': sym,
@@ -596,6 +607,28 @@ class NiftyHandler(FastHandler):
                         }
             except Exception:
                 pass
+
+            # If the scanner snapshot uses an unexpected symbol format or has
+            # not published yet, use the normal NSE equity snapshot once as a
+            # fallback. This fixes an empty NIFTY panel without depending on
+            # the slower dedicated index-constituent endpoint.
+            if not rows_by_symbol:
+                try:
+                    df = app_auto.get_snapshot()
+                    if df is not None and len(df):
+                        for _, r in df.iterrows():
+                            sym = _clean_nifty_symbol(r.get('symbol'))
+                            if sym in NIFTY_SYMBOLS:
+                                rows_by_symbol[sym] = {
+                                    'symbol': sym,
+                                    'price': r.get('close', r.get('ltp')),
+                                    'change': r.get('changepct', r.get('change')),
+                                    'weightage': r.get('weightage'),
+                                    'volume': r.get('volume'),
+                                    'turnover': r.get('turnover', r.get('traded_value'))
+                                }
+                except Exception:
+                    pass
 
             rows = [rows_by_symbol.get(s, {
                 'symbol': s, 'price': None, 'change': None,
