@@ -2,6 +2,8 @@ import os
 import threading
 import time
 import urllib.parse
+import math
+import requests
 import app_auto
 import start
 from nsemine import live, historical
@@ -39,6 +41,8 @@ def snapshot_ai(row, max_volume):
     }
 
 def scan():
+    if app_auto.STATE.get('rows') and time.time() - app_auto.STATE.get('ts', 0) < 15:
+        return app_auto.STATE.get('rows', [])
     with app_auto.STATE['lock']:
         if app_auto.STATE.get('scanning'):
             return app_auto.STATE.get('rows', [])
@@ -144,7 +148,7 @@ tr.stockrow{cursor:pointer}tr.stockrow:hover{background:#f6f9fc}.fit{color:#0783
 .empty{padding:20px;text-align:center;color:#697386}
 .modal{position:fixed;inset:0;background:#0008;display:none;align-items:center;justify-content:center;z-index:50;padding:15px}.modalbox{background:#fff;border-radius:16px;width:min(760px,100%);max-height:90vh;overflow:auto;padding:20px}
 .modalhead{display:flex;justify-content:space-between;align-items:center}.close{background:#e9eef4;color:#172033}.detailgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:15px}.detail{background:#f6f8fa;border-radius:10px;padding:11px}.detail b{display:block;font-size:11px;color:#687386;margin-bottom:5px}.detail span{font-size:17px;font-weight:800}
-.spinner{display:inline-block;width:13px;height:13px;border:2px solid #cbd5e1;border-top-color:#111827;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px}@keyframes spin{to{transform:rotate(360deg)}}
+.options-panel{margin-top:15px;border:1px solid #e3e8ee;border-radius:12px;padding:12px}.options-head{display:flex;justify-content:space-between;align-items:center;gap:10px}.options-head button{padding:7px 10px}.options-summary{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}.opt-chip{background:#f5f7fa;border-radius:9px;padding:8px 10px;font-size:12px}.callcell{color:#07833a}.putcell{color:#c62828}@media(max-width:600px){.options-panel table{min-width:720px}}.spinner{display:inline-block;width:13px;height:13px;border:2px solid #cbd5e1;border-top-color:#111827;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px}@keyframes spin{to{transform:rotate(360deg)}}
 @media(max-width:900px){.recommend{grid-template-columns:1fr}.detailgrid{grid-template-columns:repeat(2,1fr)}.wrap{padding:10px}}
 @media(max-width:600px){header{padding:15px 12px}h1{font-size:23px}.panel{padding:13px}.controls input,.controls button,.search{width:100%;min-height:44px}.searchrow{display:grid;grid-template-columns:1fr}.recommend{grid-template-columns:1fr}.detailgrid{grid-template-columns:1fr 1fr}table{min-width:1000px}th,td{font-size:12px;padding:9px 7px}}
 
@@ -186,7 +190,12 @@ tr.stockrow{cursor:pointer}tr.stockrow:hover{background:#f6f9fc}.fit{color:#0783
 </div>
 <div id="chartStatus" class="small">Loading chart…</div>
 <div id="priceChart"></div>
-<div class="chart-note">Candlestick + volume • NSE historical data</div>
+<div class="chart-note">Candlestick + volume • NSE historical data</div><div class="options-panel">
+  <div class="options-head"><b>🟢 CALL / 🔴 PUT — Options Analysis</b><button onclick="loadOptions()">REFRESH</button></div>
+  <div id="optionsStatus" class="small">Loading option chain…</div>
+  <div id="optionsSummary" class="options-summary"></div>
+  <div class="tablewrap"><table><thead><tr><th>Call LTP</th><th>Call OI</th><th>Call OI Δ</th><th>Strike</th><th>Put OI Δ</th><th>Put OI</th><th>Put LTP</th></tr></thead><tbody id="optionsRows"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody></table></div>
+</div>
 <div id="details" class="detailgrid"></div>
 <div id="dreason" class="hint" style="margin-top:15px"></div></div></div>
 
@@ -214,7 +223,7 @@ function renderState(j){
 }
 async function state(){try{let r=await fetch('/api/state');renderState(await r.json())}catch(e){$('msg').textContent='Connection error'}}
 async function scanNow(){if(window.scanning)return;window.scanning=true;$('msg').innerHTML='<span class="spinner"></span> Starting fresh NSE scan…';try{await fetch('/api/scan?start=1')}catch(e){}let timer=setInterval(async()=>{await state();let r=await fetch('/api/state');let j=await r.json();if(!j.scanning){clearInterval(timer);window.scanning=false;renderState(j)}},700)}
-async function openStock(sym){sym=decodeURIComponent(sym);activeChartSymbol=sym;$('modal').style.display='flex';$('dtitle').textContent=sym;$('dsub').textContent='Loading latest stock data…';$('details').innerHTML='<div class="empty">Fetching…</div>';loadChart('5');try{let r=await fetch('/api/stock?symbol='+encodeURIComponent(sym));let j=await r.json();if(!j.ok)throw Error(j.error||'Failed');let x=j.data;$('dsub').textContent='NSE • '+(j.refined?'5-minute AI refined':'snapshot data');let items=[['Price',money(x.price)],['Change',val(x.change)+'%'],['AI Score',val(x.score)],['Signal',val(x.signal)],['Confidence',val(x.ai_confidence)+'%'],['Model',val(x.ai_model)],['RSI',val(x.rsi)],['EMA 9',money(x.ema9)],['EMA 21',money(x.ema21)],['VWAP',money(x.vwap)],['MACD',val(x.macd)],['MACD Signal',val(x.macd_signal)],['ADX',val(x.adx)],['Relative Volume',val(x.relative_volume)+'x'],['ATR',money(x.atr)],['Momentum',val(x.momentum)+'%'],['Volume',Number(x.volume||0).toLocaleString('en-IN')],['Target',money(x.target)],['Stop Loss',money(x.sl)]];$('details').innerHTML=items.map(a=>'<div class="detail"><b>'+a[0]+'</b><span>'+a[1]+'</span></div>').join('');$('dreason').textContent=x.ai_reason||'No additional AI explanation available.'}catch(e){$('details').innerHTML='<div class="empty">'+e.message+'</div>';$('dsub').textContent='Unable to load stock details'}}
+async function openStock(sym){sym=decodeURIComponent(sym);activeChartSymbol=sym;$('modal').style.display='flex';$('dtitle').textContent=sym;$('dsub').textContent='Loading latest stock data…';$('details').innerHTML='<div class="empty">Fetching…</div>';loadChart('5');loadOptions();try{let r=await fetch('/api/stock?symbol='+encodeURIComponent(sym));let j=await r.json();if(!j.ok)throw Error(j.error||'Failed');let x=j.data;$('dsub').textContent='NSE • '+(j.refined?'5-minute AI refined':'snapshot data');let items=[['Price',money(x.price)],['Change',val(x.change)+'%'],['AI Score',val(x.score)],['Signal',val(x.signal)],['Confidence',val(x.ai_confidence)+'%'],['Model',val(x.ai_model)],['RSI',val(x.rsi)],['EMA 9',money(x.ema9)],['EMA 21',money(x.ema21)],['VWAP',money(x.vwap)],['MACD',val(x.macd)],['MACD Signal',val(x.macd_signal)],['ADX',val(x.adx)],['Relative Volume',val(x.relative_volume)+'x'],['ATR',money(x.atr)],['Momentum',val(x.momentum)+'%'],['Volume',Number(x.volume||0).toLocaleString('en-IN')],['Target',money(x.target)],['Stop Loss',money(x.sl)]];$('details').innerHTML=items.map(a=>'<div class="detail"><b>'+a[0]+'</b><span>'+a[1]+'</span></div>').join('');$('dreason').textContent=x.ai_reason||'No additional AI explanation available.'}catch(e){$('details').innerHTML='<div class="empty">'+e.message+'</div>';$('dsub').textContent='Unable to load stock details'}}
 function closeModal(){$('modal').style.display='none';if(chartRefreshTimer){clearInterval(chartRefreshTimer);chartRefreshTimer=null}if(activeChart){try{activeChart.remove()}catch(e){}activeChart=null;activeCandleSeries=null;activeVolumeSeries=null}}
 $('budget').addEventListener('input',()=>render());$('search').addEventListener('input',()=>{lastQuery=$('search').value;render()});
 state();setInterval(state,1500);
@@ -270,6 +279,22 @@ function startChartLiveRefresh(){
   chartRefreshTimer=setInterval(()=>{
     if($('modal').style.display==='flex' && activeChartSymbol) loadChart(chartInterval);
   },5000);
+}
+async function loadOptions(){
+  if(!activeChartSymbol)return;
+  $('optionsStatus').innerHTML='<span class="spinner"></span> Loading live CALL/PUT data…';
+  try{
+    const r=await fetch('/api/options?symbol='+encodeURIComponent(activeChartSymbol),{cache:'no-store'});
+    const j=await r.json();
+    if(!j.ok)throw Error(j.error||'Options unavailable');
+    $('optionsStatus').textContent='Expiry '+(j.expiry||'—')+' • ATM '+j.atm+' • NSE option chain';
+    const pcr=j.pcr==null?'—':Number(j.pcr).toFixed(2);
+    $('optionsSummary').innerHTML='<span class="opt-chip">Spot <b>'+money(j.spot)+'</b></span><span class="opt-chip">ATM <b>'+j.atm+'</b></span><span class="opt-chip">PCR <b>'+pcr+'</b></span><span class="opt-chip">Option data feeds prediction</span>';
+    $('optionsRows').innerHTML=j.rows.map(x=>'<tr><td class="callcell">'+val(x.call.ltp)+'</td><td>'+val(x.call.oi)+'</td><td>'+val(x.call.oi_change)+'</td><td><b>'+x.strike+'</b></td><td>'+val(x.put.oi_change)+'</td><td>'+val(x.put.oi)+'</td><td class="putcell">'+val(x.put.ltp)+'</td></tr>').join('');
+  }catch(e){
+    $('optionsStatus').textContent='Options unavailable: '+e.message;
+    $('optionsRows').innerHTML='<tr><td colspan="7" class="empty">No option-chain data for this stock.</td></tr>';
+  }
 }
 startChartLiveRefresh();
 </script></body></html>'''
@@ -424,7 +449,67 @@ async function loadNifty50(){
 n$('niftySearch').addEventListener('input',niftyRender);loadNifty50();setInterval(loadNifty50,5000);</script>'''
 app_auto.HTML = app_auto.HTML.replace('<div class="wrap">', _NIFTY50_PANEL + '<div class="wrap">' + _NIFTY50_SCRIPT)
 
+def _clean_json_value(v):
+    if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+        return None
+    if isinstance(v, dict):
+        return {k: _clean_json_value(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_clean_json_value(x) for x in v]
+    return v
+
+def _nse_option_chain(symbol):
+    s = str(symbol or '').upper().strip()
+    if not s:
+        return {'ok': False, 'error': 'Missing symbol'}
+    is_index = s in ('NIFTY', 'NIFTY 50', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY')
+    api = 'https://www.nseindia.com/api/option-chain-indices' if is_index else 'https://www.nseindia.com/api/option-chain-equities'
+    api_symbol = 'NIFTY' if s == 'NIFTY 50' else s
+    headers = {'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/153 Safari/537.36',
+               'Accept':'application/json,text/plain,*/*','Referer':'https://www.nseindia.com/option-chain'}
+    try:
+        sess=requests.Session()
+        sess.headers.update(headers)
+        sess.get('https://www.nseindia.com',timeout=8)
+        r=sess.get(api,params={'symbol':api_symbol},timeout=10)
+        r.raise_for_status()
+        raw=r.json()
+        records=raw.get('records',{}) if isinstance(raw,dict) else {}
+        expiries=records.get('expiryDates') or []
+        expiry=expiries[0] if expiries else None
+        data=[]
+        for x in records.get('data',[]) or []:
+            if expiry and x.get('expiryDate') != expiry: continue
+            strike=x.get('strikePrice')
+            if strike is None: continue
+            ce=x.get('CE') or {}
+            pe=x.get('PE') or {}
+            data.append({'strike':strike,'expiry':x.get('expiryDate'),
+                         'call':{'ltp':ce.get('lastPrice'),'oi':ce.get('openInterest'),'oi_change':ce.get('changeinOpenInterest'),
+                                 'volume':ce.get('totalTradedVolume'),'iv':ce.get('impliedVolatility'),'bid':ce.get('bidprice'),'ask':ce.get('askPrice')},
+                         'put':{'ltp':pe.get('lastPrice'),'oi':pe.get('openInterest'),'oi_change':pe.get('changeinOpenInterest'),
+                                'volume':pe.get('totalTradedVolume'),'iv':pe.get('impliedVolatility'),'bid':pe.get('bidprice'),'ask':pe.get('askPrice')}})
+        spot=records.get('underlyingValue')
+        if spot is None:
+            q=live.get_index_live_price('NIFTY 50') if is_index else live.get_stock_live_quotes(api_symbol)
+            spot=(q or {}).get('close')
+        if not data: return {'ok':False,'error':'No option-chain data available'}
+        data.sort(key=lambda x: float(x['strike']))
+        atm=min(data,key=lambda x:abs(float(x['strike'])-float(spot))) if spot is not None else data[len(data)//2]
+        ai=float(atm['strike'])
+        selected=sorted(data,key=lambda x:abs(float(x['strike'])-ai))[:11]
+        call_oi=sum(float(x['call']['oi'] or 0) for x in selected)
+        put_oi=sum(float(x['put']['oi'] or 0) for x in selected)
+        pcr=(put_oi/call_oi) if call_oi else None
+        return _clean_json_value({'ok':True,'symbol':api_symbol,'spot':spot,'expiry':expiry,'atm':atm['strike'],
+                                  'pcr':pcr,'rows':selected,'source':'NSE option chain'})
+    except Exception as e:
+        return {'ok':False,'error':str(e)[:180]}
+
 class FastHandler(app_auto.Handler):
+    def send_json(self, obj, code=200):
+        return super().send_json(_clean_json_value(obj), code)
+
     def do_GET(self):
         path, _, query = self.path.partition('?')
         if path == '/api/scan':
@@ -548,6 +633,11 @@ class FastHandler(app_auto.Handler):
             except Exception as e:
                 self.send_json({'ok': False, 'error': str(e)[:180]}, 503)
             return
+        if path == '/api/options':
+            qs=urllib.parse.parse_qs(query)
+            symbol=(qs.get('symbol',[''])[0] or '').upper().strip()
+            self.send_json(_nse_option_chain(symbol), 200); return
+
         if path == '/api/stock':
             qs=urllib.parse.parse_qs(query); symbol=(qs.get('symbol',[''])[0] or '').upper().strip()
             if not symbol:self.send_json({'ok':False,'error':'Missing symbol'},400);return
