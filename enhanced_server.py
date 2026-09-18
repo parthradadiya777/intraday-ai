@@ -32,6 +32,19 @@ def market_state():
     return 'CLOSED'
 
 
+def public_rows():
+    rows=[dict(x) for x in STATE.get('rows',[])]
+    ms=market_state()
+    for x in rows:
+        if ms!='OPEN':
+            x['pre_market_signal']=x.get('signal')
+            x['signal']='WAIT'
+            x['signal_status']='PAUSED — '+ms
+        else:
+            x['signal_status']='LIVE'
+    return rows
+
+
 def paper_mark():
     rows = {x.get('symbol'): x for x in STATE.get('rows', [])}
     with PAPER_LOCK:
