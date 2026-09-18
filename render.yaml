@@ -4,5 +4,5 @@ services:
     runtime: python
     plan: free
     buildCommand: "python -m py_compile app_auto.py start.py server.py ai_engine.py"
-    startCommand: "python server.py"
+    startCommand: "python enhanced_server.py"
     healthCheckPath: "/health"
