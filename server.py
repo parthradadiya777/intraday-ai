@@ -125,6 +125,7 @@ def start_background_scan(force=False):
 
 app_auto.HTML = r'''<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<script src="https://unpkg.com/lightweight-charts@4.2.2/dist/lightweight-charts.standalone.production.js"></script>
 <title>Intraday AI</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#f4f6f8;color:#172033;font-family:Arial,sans-serif}
@@ -147,13 +148,11 @@ tr.stockrow{cursor:pointer}tr.stockrow:hover{background:#f6f9fc}.fit{color:#0783
 @media(max-width:900px){.recommend{grid-template-columns:1fr}.detailgrid{grid-template-columns:repeat(2,1fr)}.wrap{padding:10px}}
 @media(max-width:600px){header{padding:15px 12px}h1{font-size:23px}.panel{padding:13px}.controls input,.controls button,.search{width:100%;min-height:44px}.searchrow{display:grid;grid-template-columns:1fr}.recommend{grid-template-columns:1fr}.detailgrid{grid-template-columns:1fr 1fr}table{min-width:1000px}th,td{font-size:12px;padding:9px 7px}}
 
-<style>
 .chart-toolbar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:15px}
 .chart-toolbar button{padding:7px 10px;font-size:12px}
 #priceChart{width:100%;height:360px;margin-top:8px;border:1px solid #e2e7ed;border-radius:10px;overflow:hidden}
 .chart-note{font-size:11px;color:#687386;margin:6px 0 12px}
 @media(max-width:600px){#priceChart{height:300px}.chart-toolbar button{min-width:45px}}
-</style>
 </style></head>
 <body>
 <header><h1>Intraday AI</h1><div class="sub">NSE intraday AI scanner • multi-stock search • live recommendation</div>
