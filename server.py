@@ -199,6 +199,54 @@ state();setInterval(state,1500);
 </script></body></html>'''
 
 
+# NIFTY 50 background cache: never block browser requests on NSE.
+NIFTY_CACHE = {'rows': [], 'index': {}, 'error': '', 'ts': 0}
+NIFTY_LOCK = threading.Lock()
+NIFTY_SYMBOLS = [
+    'ADANIENT','ADANIPORTS','APOLLOHOSP','ASIANPAINT','AXISBANK','BAJAJ-AUTO',
+    'BAJAJFINSV','BAJFINANCE','BEL','BHARTIARTL','CIPLA','COALINDIA','DRREDDY',
+    'EICHERMOT','ETERNAL','GRASIM','HCLTECH','HDFCBANK','HDFCLIFE','HINDALCO',
+    'HINDUNILVR','ICICIBANK','INDIGO','INFY','ITC','JIOFIN','JSWSTEEL','KOTAKBANK',
+    'LT','M&M','MARUTI','MAXHEALTH','NESTLEIND','NTPC','ONGC','POWERGRID','RELIANCE',
+    'SBILIFE','SBIN','SHRIRAMFIN','SUNPHARMA','TATACONSUM','TATASTEEL','TCS','TECHM',
+    'TITAN','TRENT','ULTRACEMCO','WIPRO'
+]
+
+def refresh_nifty_cache():
+    while True:
+        try:
+            df = live.get_index_constituents_live_snapshot('NIFTY 50')
+            rows_by_symbol = {}
+            if df is not None and len(df):
+                for _, r in df.iterrows():
+                    sym=str(r.get('symbol','')).strip()
+                    if sym:
+                        rows_by_symbol[sym.upper()] = {
+                            'symbol':sym,'price':r.get('ltp'),'change':r.get('changepct'),
+                            'weightage':r.get('weightage'),'volume':r.get('volume'),
+                            'turnover':r.get('turnover')
+                        }
+            # Fill missing constituents from the complete NSE EQ snapshot.
+            if len(rows_by_symbol) < 50:
+                eq = live.get_all_securities_live_snapshot(series='EQ')
+                if eq is not None and len(eq):
+                    for _, r in eq.iterrows():
+                        sym=str(r.get('symbol','')).strip()
+                        if sym.upper() in NIFTY_SYMBOLS and sym.upper() not in rows_by_symbol:
+                            rows_by_symbol[sym.upper()] = {
+                                'symbol':sym,'price':r.get('close'),'change':r.get('changepct'),
+                                'weightage':None,'volume':r.get('volume'),
+                                'turnover':r.get('traded_value')
+                            }
+            rows=[rows_by_symbol[s] for s in NIFTY_SYMBOLS if s in rows_by_symbol]
+            idx=live.get_index_live_price('NIFTY 50') or {}
+            with NIFTY_LOCK:
+                NIFTY_CACHE.update({'rows':rows[:50],'index':idx,'error':'' if len(rows)>=50 else 'NSE returned '+str(len(rows))+' NIFTY 50 stocks','ts':time.time()})
+        except Exception as e:
+            with NIFTY_LOCK:
+                NIFTY_CACHE['error']=str(e)[:180]
+        time.sleep(15)
+
 # NIFTY50 UI injection
 _NIFTY50_PANEL = '''
 <div class="panel nifty-panel"><h2>🇮🇳 NIFTY 50</h2><div id="niftyIndex" class="nifty-index">Loading NIFTY 50…</div><div class="searchrow"><input id="niftySearch" class="search" placeholder="🔍 Search NIFTY 50 stock"><span id="niftyInfo" class="searchinfo"></span></div><div class="tablewrap nifty-table"><table><thead><tr><th>Stock</th><th>Price</th><th>Change</th><th>Weight</th><th>Volume</th><th>Turnover</th></tr></thead><tbody id="niftyRows"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody></table></div></div>
@@ -241,62 +289,18 @@ class NiftyHandler(FastHandler):
     def do_GET(self):
         path, _, query = self.path.partition('?')
         if path == '/api/nifty50':
-            try:
-                # Primary source: NSE index constituent snapshot.
-                df = live.get_index_constituents_live_snapshot('NIFTY 50')
-                rows = []
-                if df is not None and len(df):
-                    for _, r in df.iterrows():
-                        sym = str(r.get('symbol','')).strip()
-                        if sym:
-                            rows.append({'symbol':sym,'price':r.get('ltp'),'change':r.get('changepct'),
-                                         'weightage':r.get('weightage'),'volume':r.get('volume'),
-                                         'turnover':r.get('turnover')})
-                # NSE can occasionally return an incomplete constituent snapshot.
-                # Fill missing NIFTY 50 symbols from the complete EQ security snapshot.
-                if len(rows) < 50:
-                    try:
-                        eq = live.get_all_securities_live_snapshot(series='EQ')
-                        if eq is not None and len(eq):
-                            existing = {x['symbol'].upper(): x for x in rows}
-                            nifty_symbols = [
-                                'ADANIENT','ADANIPORTS','APOLLOHOSP','ASIANPAINT','AXISBANK',
-                                'BAJAJ-AUTO','BAJAJFINSV','BAJFINANCE','BEL','BHARTIARTL',
-                                'CIPLA','COALINDIA','DRREDDY','EICHERMOT','ETERNAL','GRASIM',
-                                'HCLTECH','HDFCBANK','HDFCLIFE','HINDALCO','HINDUNILVR',
-                                'ICICIBANK','INDIGO','INFY','ITC','JIOFIN','JSWSTEEL','KOTAKBANK',
-                                'LT','M&M','MARUTI','MAXHEALTH','NESTLEIND','NTPC','ONGC',
-                                'POWERGRID','RELIANCE','SBILIFE','SBIN','SHRIRAMFIN','SUNPHARMA',
-                                'TATACONSUM','TATASTEEL','TCS','TECHM','TITAN','TRENT',
-                                'ULTRACEMCO','WIPRO'
-                            ]
-                            for _, r in eq.iterrows():
-                                sym = str(r.get('symbol','')).strip()
-                                if sym.upper() in nifty_symbols and sym.upper() not in existing:
-                                    rows.append({'symbol':sym,'price':r.get('close'),
-                                                 'change':r.get('changepct'),'weightage':None,
-                                                 'volume':r.get('volume'),'turnover':r.get('traded_value')})
-                                    existing[sym.upper()] = rows[-1]
-                            # Preserve the official index order when possible.
-                            order = {s:i for i,s in enumerate(nifty_symbols)}
-                            rows.sort(key=lambda x: order.get(x['symbol'].upper(), 999))
-                    except Exception:
-                        pass
-                if not rows:
-                    self.send_json({'ok': False, 'error': 'NIFTY 50 data unavailable'}, 503); return
-                self.send_json({'ok':True,'rows':rows[:50],'count':len(rows[:50])})
-            except Exception as e: self.send_json({'ok':False,'error':str(e)[:180]},503)
-            return
+            with NIFTY_LOCK:
+                payload={'ok':bool(NIFTY_CACHE['rows']),'rows':list(NIFTY_CACHE['rows']),'count':len(NIFTY_CACHE['rows']),'error':NIFTY_CACHE['error'],'ts':NIFTY_CACHE['ts']}
+            self.send_json(payload, 200 if payload['ok'] else 503); return
         if path == '/api/nifty50/index':
-            try:
-                q=live.get_index_live_price('NIFTY 50')
-                self.send_json({'ok':bool(q),'data':q or {},'error':None if q else 'NIFTY 50 index data unavailable'}, 200 if q else 503)
-            except Exception as e: self.send_json({'ok':False,'error':str(e)[:180]},503)
-            return
+            with NIFTY_LOCK:
+                q=dict(NIFTY_CACHE['index'])
+            self.send_json({'ok':bool(q),'data':q,'error':None if q else 'NIFTY 50 index data loading'}, 200 if q else 503); return
         return super().do_GET()
 
 if __name__=='__main__':
     threading.Thread(target=app_auto.auto_loop,daemon=True).start()
+    threading.Thread(target=refresh_nifty_cache,daemon=True).start()
     start_background_scan(force=True)
     port=int(os.environ.get('PORT','10000'))
     app_auto.ThreadingHTTPServer(('0.0.0.0',port),NiftyHandler).serve_forever()
