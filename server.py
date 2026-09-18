@@ -250,7 +250,7 @@ tr.stockrow{cursor:pointer}tr.stockrow:hover{background:#f6f9fc}.fit{color:#0783
   <div class="options-head"><b>🟢 CALL / 🔴 PUT — Options Analysis</b><button onclick="loadOptions()">REFRESH</button></div>
   <div id="optionsStatus" class="small">Loading option chain…</div>
   <div id="optionsSummary" class="options-summary"></div>
-  <div id="optionPick" class="option-pick" style="display:none"></div>
+  <div id="optionPick" class="option-pick" style="display:none"></div><div id="optionBacktest" class="option-pick" style="display:none"></div>
   <div class="tablewrap"><table><thead><tr><th>Call LTP</th><th>Call OI</th><th>Call OI Δ</th><th>Strike</th><th>Put OI Δ</th><th>Put OI</th><th>Put LTP</th></tr></thead><tbody id="optionsRows"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody></table></div>
 </div>
 <div id="details" class="detailgrid"></div>
@@ -375,12 +375,23 @@ async function loadOptions(){
       const p=j.option_pick;
       const sideClass=p.side==='CALL'?'callcell':'putcell';
       $('optionPick').style.display='block';
-      $('optionPick').innerHTML='<div class="option-pick-head"><div><span class="option-pick-side '+sideClass+'">AI OPTION PICK: '+p.side+' ('+p.option_type+')</span><div class="option-pick-note">'+p.reason+'</div></div><span class="badge">Confidence '+Number(p.confidence).toFixed(1)+'%</span></div><div class="option-pick-grid"><div class="option-pick-cell"><b>STRIKE</b><strong>'+p.strike+'</strong></div><div class="option-pick-cell"><b>LTP</b><strong>'+money(p.ltp)+'</strong></div><div class="option-pick-cell"><b>OI</b><strong>'+Number(p.oi).toLocaleString('en-IN')+'</strong></div><div class="option-pick-cell"><b>OI Δ</b><strong>'+val(p.oi_change)+'</strong></div><div class="option-pick-cell"><b>IV</b><strong>'+val(p.iv)+'</strong></div></div><div class="option-pick-note">Selection uses underlying AI signal + ATM/ITM preference + option liquidity (OI/volume) + bid/ask quality. It is a model score, not a guaranteed win rate.</div>';
+      $('optionPick').innerHTML='<div class="option-pick-head"><div><span class="option-pick-side '+sideClass+'">AI OPTION PICK: '+p.side+' ('+p.option_type+')</span><div class="option-pick-note">'+p.reason+'</div></div><span class="badge">Confidence '+Number(p.confidence).toFixed(1)+'%</span></div><div class="option-pick-grid"><div class="option-pick-cell"><b>STRIKE</b><strong>'+p.strike+'</strong></div><div class="option-pick-cell"><b>ENTRY LTP</b><strong>'+money(p.ltp)+'</strong></div><div class="option-pick-cell"><b>TARGET</b><strong class="green">'+money(p.target)+'</strong></div><div class="option-pick-cell"><b>STOP LOSS</b><strong class="red">'+money(p.sl)+'</strong></div><div class="option-pick-cell"><b>IV</b><strong>'+val(p.iv)+'</strong></div><div class="option-pick-cell"><b>DELTA</b><strong>'+val(p.delta)+'</strong></div><div class="option-pick-cell"><b>GAMMA</b><strong>'+val(p.gamma)+'</strong></div><div class="option-pick-cell"><b>THETA/DAY</b><strong>'+val(p.theta)+'</strong></div><div class="option-pick-cell"><b>VEGA</b><strong>'+val(p.vega)+'</strong></div><div class="option-pick-cell"><b>OI Δ</b><strong>'+val(p.oi_change)+'</strong></div></div><div class="option-pick-note">Chain: <b>'+val(p.chain_direction)+'</b> · Pressure '+val(p.chain_pressure)+' · '+(p.chain_aligned?'Direction confirmed by chain':'Chain is mixed')+'. Greeks are model-calculated from spot, strike, IV and expiry; not an NSE-provided guarantee.</div>';
     }else{
       $('optionPick').style.display='block';
       $('optionPick').innerHTML='<b>AI OPTION PICK: —</b><div class="option-pick-note">No directional BUY/SELL signal or no liquid option contract. WAIT stocks are not given a forced CALL/PUT.</div>';
     }
     $('optionsRows').innerHTML=j.rows.map(x=>'<tr><td class="callcell">'+val(x.call.ltp)+'</td><td>'+val(x.call.oi)+'</td><td>'+val(x.call.oi_change)+'</td><td><b>'+x.strike+'</b></td><td>'+val(x.put.oi_change)+'</td><td>'+val(x.put.oi)+'</td><td class="putcell">'+val(x.put.ltp)+'</td></tr>').join('');
+    // Historical setup check is loaded separately so a slow history call never blocks the live option chain.
+    $('optionBacktest').style.display='block';
+    $('optionBacktest').innerHTML='<b>📊 HISTORICAL SETUP CHECK</b><div class="option-pick-note">Calculating recent 5-minute setup results…</div>';
+    try{
+      const br=await fetch('/api/backtest?symbol='+encodeURIComponent(activeChartSymbol),{cache:'no-store'}); const bj=await br.json();
+      if(bj.ok){
+        $('optionBacktest').innerHTML='<b>📊 HISTORICAL SETUP CHECK</b><div class="option-pick-grid"><div class="option-pick-cell"><b>TESTED</b><strong>'+val(bj.signals_tested)+'</strong></div><div class="option-pick-cell"><b>TARGET HIT</b><strong>'+val(bj.target_hits)+'</strong></div><div class="option-pick-cell"><b>SL HIT</b><strong>'+val(bj.sl_hits)+'</strong></div><div class="option-pick-cell"><b>TIMEOUT</b><strong>'+val(bj.timeouts)+'</strong></div><div class="option-pick-cell"><b>HIT RATE</b><strong>'+val(bj.historical_hit_rate)+'%</strong></div></div><div class="option-pick-note">'+bj.note+'</div>';
+      }else{
+        $('optionBacktest').innerHTML='<b>📊 HISTORICAL SETUP CHECK</b><div class="option-pick-note">'+(bj.error||'Historical data unavailable')+'</div>';
+      }
+    }catch(e){ $('optionBacktest').innerHTML='<b>📊 HISTORICAL SETUP CHECK</b><div class="option-pick-note">Historical check unavailable right now.</div>'; }
   }catch(e){
     $('optionsStatus').textContent='Options unavailable: '+e.message;
     $('optionPick').style.display='block';
