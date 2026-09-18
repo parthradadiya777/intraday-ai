@@ -174,6 +174,14 @@ class EnhancedHandler(server.NiftyHandler):
     def _json(self,obj,code=200): self.send_json(clean(obj),code)
     def do_GET(self):
         path,_,query=self.path.partition('?')
+        if path=='/api/state':
+            s=server.app_auto.load_settings()
+            self._json({'rows':public_rows(),'ts':STATE.get('ts',0),
+                'last_auto':STATE.get('last_auto',''),'error':STATE.get('last_error',''),
+                'scanning':STATE.get('scanning',False),'progress':STATE.get('progress',0),
+                'progress_text':STATE.get('progress_text',''),'scan_id':STATE.get('scan_id',0),
+                'market':market_state(),'settings':{'auto':s.get('auto',True)}})
+            return
         if path=='/api/paper':
             paper_mark(); self._json({'ok':True,'open':STATE['paper_positions'],'history':STATE['paper_history'][-100:]}); return
         if path=='/api/backtest':
