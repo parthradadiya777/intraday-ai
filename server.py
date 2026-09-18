@@ -556,52 +556,162 @@ def _clean_json_value(v):
     return v
 
 def _nse_option_chain(symbol):
+    """Fetch the nearest-expiry NSE option chain.
+
+    NSE changed its option-chain API in 2026. The old
+    /api/option-chain-equities endpoint can return an empty data set now.
+    The current v3 flow is:
+      1) /api/option-chain-contract-info?symbol=...
+      2) /api/option-chain-v3?type=Equity&symbol=...&expiry=...
+    """
     s = str(symbol or '').upper().strip()
     if not s:
         return {'ok': False, 'error': 'Missing symbol'}
+
     is_index = s in ('NIFTY', 'NIFTY 50', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY')
-    api = 'https://www.nseindia.com/api/option-chain-indices' if is_index else 'https://www.nseindia.com/api/option-chain-equities'
+    api_type = 'Indices' if is_index else 'Equity'
     api_symbol = 'NIFTY' if s == 'NIFTY 50' else s
-    headers = {'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/153 Safari/537.36',
-               'Accept':'application/json,text/plain,*/*','Referer':'https://www.nseindia.com/option-chain'}
-    try:
-        sess=requests.Session()
-        sess.headers.update(headers)
-        sess.get('https://www.nseindia.com',timeout=8)
-        r=sess.get(api,params={'symbol':api_symbol},timeout=10)
+
+    headers = {
+        'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/153 Safari/537.36',
+        'Accept':'application/json,text/plain,*/*',
+        'Accept-Language':'en-US,en;q=0.9',
+        'Referer':'https://www.nseindia.com/option-chain',
+        'Connection':'keep-alive'
+    }
+
+    def fetch_json(sess, url, params=None):
+        r = sess.get(url, params=params, timeout=12)
+        if r.status_code in (401, 403):
+            # Refresh NSE cookies once; cloud/NSE anti-bot responses can expire
+            # the first session before the API request is made.
+            sess.cookies.clear()
+            sess.get('https://www.nseindia.com/option-chain', timeout=10)
+            r = sess.get(url, params=params, timeout=12)
         r.raise_for_status()
-        raw=r.json()
-        records=raw.get('records',{}) if isinstance(raw,dict) else {}
-        expiries=records.get('expiryDates') or []
-        expiry=expiries[0] if expiries else None
-        data=[]
-        for x in records.get('data',[]) or []:
-            if expiry and x.get('expiryDate') != expiry: continue
-            strike=x.get('strikePrice')
-            if strike is None: continue
-            ce=x.get('CE') or {}
-            pe=x.get('PE') or {}
-            data.append({'strike':strike,'expiry':x.get('expiryDate'),
-                         'call':{'ltp':ce.get('lastPrice'),'oi':ce.get('openInterest'),'oi_change':ce.get('changeinOpenInterest'),
-                                 'volume':ce.get('totalTradedVolume'),'iv':ce.get('impliedVolatility'),'bid':ce.get('bidprice'),'ask':ce.get('askPrice')},
-                         'put':{'ltp':pe.get('lastPrice'),'oi':pe.get('openInterest'),'oi_change':pe.get('changeinOpenInterest'),
-                                'volume':pe.get('totalTradedVolume'),'iv':pe.get('impliedVolatility'),'bid':pe.get('bidprice'),'ask':pe.get('askPrice')}})
-        spot=records.get('underlyingValue')
+        return r.json()
+
+    try:
+        sess = requests.Session()
+        sess.headers.update(headers)
+        sess.get('https://www.nseindia.com/option-chain', timeout=10)
+
+        # Current NSE API: resolve the nearest valid expiry first.
+        contract_url = 'https://www.nseindia.com/api/option-chain-contract-info'
+        contract = fetch_json(sess, contract_url, {'symbol': api_symbol})
+        expiries = []
+        if isinstance(contract, dict):
+            expiries = contract.get('expiryDates') or contract.get('records', {}).get('expiryDates') or []
+        expiry = expiries[0] if expiries else None
+
+        raw = None
+        if expiry:
+            raw = fetch_json(
+                sess,
+                'https://www.nseindia.com/api/option-chain-v3',
+                {'type': api_type, 'symbol': api_symbol, 'expiry': expiry}
+            )
+
+        # Backward-compatible fallback for any temporary v3/contract-info issue.
+        if not isinstance(raw, dict):
+            old_api = 'https://www.nseindia.com/api/option-chain-indices' if is_index else 'https://www.nseindia.com/api/option-chain-equities'
+            raw = fetch_json(sess, old_api, {'symbol': api_symbol})
+            records = raw.get('records', {}) if isinstance(raw, dict) else {}
+            expiries = records.get('expiryDates') or []
+            expiry = expiries[0] if expiries else None
+
+        records = raw.get('records', {}) if isinstance(raw, dict) else {}
+        source_rows = records.get('data') or raw.get('data') or []
+        if not source_rows:
+            return {'ok':False, 'error':f'No option-chain contracts available for {api_symbol}'}
+
+        if not expiry:
+            expiry = records.get('expiryDates', [None])[0] if records.get('expiryDates') else None
+
+        data = []
+        for x in source_rows:
+            if not isinstance(x, dict):
+                continue
+            # v3 responses may expose expiry as expiryDates on the row, while
+            # older responses use expiryDate.
+            row_expiry = x.get('expiryDate') or x.get('expiryDates') or x.get('expiry')
+            if expiry and row_expiry and str(row_expiry) != str(expiry):
+                continue
+            strike = x.get('strikePrice', x.get('strike'))
+            if strike is None:
+                continue
+            ce = x.get('CE') or {}
+            pe = x.get('PE') or {}
+            data.append({
+                'strike': strike,
+                'expiry': row_expiry or expiry,
+                'call': {
+                    'ltp': ce.get('lastPrice'),
+                    'oi': ce.get('openInterest'),
+                    'oi_change': ce.get('changeinOpenInterest'),
+                    'volume': ce.get('totalTradedVolume'),
+                    'iv': ce.get('impliedVolatility'),
+                    'bid': ce.get('bidprice', ce.get('buyPrice1')),
+                    'ask': ce.get('askPrice', ce.get('sellPrice1'))
+                },
+                'put': {
+                    'ltp': pe.get('lastPrice'),
+                    'oi': pe.get('openInterest'),
+                    'oi_change': pe.get('changeinOpenInterest'),
+                    'volume': pe.get('totalTradedVolume'),
+                    'iv': pe.get('impliedVolatility'),
+                    'bid': pe.get('bidprice', pe.get('buyPrice1')),
+                    'ask': pe.get('askPrice', pe.get('sellPrice1'))
+                }
+            })
+
+        if not data:
+            return {'ok':False, 'error':f'No option-chain data for {api_symbol} {expiry or ""}'.strip()}
+
+        # Underlying can live at records level, or inside the option legs.
+        spot = records.get('underlyingValue') or raw.get('underlyingValue')
         if spot is None:
-            q=live.get_index_live_price('NIFTY 50') if is_index else live.get_stock_live_quotes(api_symbol)
-            spot=(q or {}).get('close')
-        if not data: return {'ok':False,'error':'No option-chain data available'}
+            for x in source_rows:
+                for leg in (x.get('CE') or {}, x.get('PE') or {}):
+                    if leg.get('underlyingValue') is not None:
+                        spot = leg.get('underlyingValue')
+                        break
+                if spot is not None:
+                    break
+        if spot is None:
+            try:
+                q = live.get_index_live_price('NIFTY 50') if is_index else live.get_stock_live_quotes(api_symbol)
+                spot = (q or {}).get('close')
+            except Exception:
+                spot = None
+
         data.sort(key=lambda x: float(x['strike']))
-        atm=min(data,key=lambda x:abs(float(x['strike'])-float(spot))) if spot is not None else data[len(data)//2]
-        ai=float(atm['strike'])
-        selected=sorted(data,key=lambda x:abs(float(x['strike'])-ai))[:11]
-        call_oi=sum(float(x['call']['oi'] or 0) for x in selected)
-        put_oi=sum(float(x['put']['oi'] or 0) for x in selected)
-        pcr=(put_oi/call_oi) if call_oi else None
-        return _clean_json_value({'ok':True,'symbol':api_symbol,'spot':spot,'expiry':expiry,'atm':atm['strike'],
-                                  'pcr':pcr,'rows':selected,'source':'NSE option chain'})
+        if spot is not None:
+            atm = min(data, key=lambda x: abs(float(x['strike']) - float(spot)))
+        else:
+            atm = data[len(data)//2]
+
+        # Show 11 strikes around ATM, matching the compact UI.
+        ai = float(atm['strike'])
+        selected = sorted(data, key=lambda x: abs(float(x['strike']) - ai))[:11]
+        selected.sort(key=lambda x: float(x['strike']))
+
+        call_oi = sum(float(x['call'].get('oi') or 0) for x in selected)
+        put_oi = sum(float(x['put'].get('oi') or 0) for x in selected)
+        pcr = (put_oi / call_oi) if call_oi else None
+
+        return _clean_json_value({
+            'ok':True,
+            'symbol':api_symbol,
+            'spot':spot,
+            'expiry':expiry,
+            'atm':atm['strike'],
+            'pcr':pcr,
+            'rows':selected,
+            'source':'NSE option chain v3'
+        })
     except Exception as e:
-        return {'ok':False,'error':str(e)[:180]}
+        return {'ok':False, 'error':str(e)[:180]}
 
 OPTION_CACHE={}
 OPTION_CACHE_LOCK=threading.Lock()
