@@ -262,7 +262,10 @@ function render(){
  $('rows').innerHTML=sorted.slice(0,100).map(x=>{let qy=qty(x),fit=qy>0;return '<tr class="stockrow" onclick="openStock(\''+encodeURIComponent(x.symbol)+'\')"><td><b>'+x.symbol+'</b></td><td>'+money(x.price)+'</td><td>'+val(x.change)+'%</td><td><b>'+val(x.score)+'</b></td><td>'+val(x.ai_confidence)+'%</td><td>'+val(x.ai_model)+'</td><td><span class="badge">'+x.signal+'</span></td><td>'+qy+'</td><td>'+money(qy*x.price)+'</td><td>'+money(x.target)+'</td><td>'+money(x.sl)+'</td><td class="'+(fit?'fit':'notfit')+'">'+(fit?'✓ FIT':'—')+'</td></tr>'}).join('')||'<tr><td colspan="12" class="empty">No matching stock.</td></tr>';
 }
 function renderState(j){
- DATA=j.rows||DATA;$('last').textContent='Last scan: '+(j.ts?new Date(j.ts*1000).toLocaleTimeString('en-IN'):'--');
+ // Never wipe a valid stock list just because a background AI scan is in progress.
+ // Keep the last published rows visible; replace them only when a non-empty fresh scan arrives.
+ if(Array.isArray(j.rows) && j.rows.length) DATA=j.rows;
+ $('last').textContent='Last scan: '+(j.ts?new Date(j.ts*1000).toLocaleTimeString('en-IN'):'--');
  $('msg').innerHTML=j.scanning?'<span class="spinner"></span> '+(j.progress_text||'Scanning…'):(j.error?'Last scan had an error':'Live NSE data');
  $('bar').style.width=(j.progress||0)+'%';render();
 }
