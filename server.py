@@ -242,14 +242,49 @@ class NiftyHandler(FastHandler):
         path, _, query = self.path.partition('?')
         if path == '/api/nifty50':
             try:
+                # Primary source: NSE index constituent snapshot.
                 df = live.get_index_constituents_live_snapshot('NIFTY 50')
-                if df is None or len(df) == 0:
-                    self.send_json({'ok': False, 'error': 'NIFTY 50 constituent data unavailable'}, 503); return
-                rows=[]
-                for _, r in df.iterrows():
-                    sym=str(r.get('symbol','')).strip()
-                    if sym: rows.append({'symbol':sym,'price':r.get('ltp'),'change':r.get('changepct'),'weightage':r.get('weightage'),'volume':r.get('volume'),'turnover':r.get('turnover')})
-                self.send_json({'ok':True,'rows':rows,'count':len(rows)})
+                rows = []
+                if df is not None and len(df):
+                    for _, r in df.iterrows():
+                        sym = str(r.get('symbol','')).strip()
+                        if sym:
+                            rows.append({'symbol':sym,'price':r.get('ltp'),'change':r.get('changepct'),
+                                         'weightage':r.get('weightage'),'volume':r.get('volume'),
+                                         'turnover':r.get('turnover')})
+                # NSE can occasionally return an incomplete constituent snapshot.
+                # Fill missing NIFTY 50 symbols from the complete EQ security snapshot.
+                if len(rows) < 50:
+                    try:
+                        eq = live.get_all_securities_live_snapshot(series='EQ')
+                        if eq is not None and len(eq):
+                            existing = {x['symbol'].upper(): x for x in rows}
+                            nifty_symbols = [
+                                'ADANIENT','ADANIPORTS','APOLLOHOSP','ASIANPAINT','AXISBANK',
+                                'BAJAJ-AUTO','BAJAJFINSV','BAJFINANCE','BEL','BHARTIARTL',
+                                'CIPLA','COALINDIA','DRREDDY','EICHERMOT','ETERNAL','GRASIM',
+                                'HCLTECH','HDFCBANK','HDFCLIFE','HINDALCO','HINDUNILVR',
+                                'ICICIBANK','INDIGO','INFY','ITC','JIOFIN','JSWSTEEL','KOTAKBANK',
+                                'LT','M&M','MARUTI','MAXHEALTH','NESTLEIND','NTPC','ONGC',
+                                'POWERGRID','RELIANCE','SBILIFE','SBIN','SHRIRAMFIN','SUNPHARMA',
+                                'TATACONSUM','TATASTEEL','TCS','TECHM','TITAN','TRENT',
+                                'ULTRACEMCO','WIPRO'
+                            ]
+                            for _, r in eq.iterrows():
+                                sym = str(r.get('symbol','')).strip()
+                                if sym.upper() in nifty_symbols and sym.upper() not in existing:
+                                    rows.append({'symbol':sym,'price':r.get('close'),
+                                                 'change':r.get('changepct'),'weightage':None,
+                                                 'volume':r.get('volume'),'turnover':r.get('traded_value')})
+                                    existing[sym.upper()] = rows[-1]
+                            # Preserve the official index order when possible.
+                            order = {s:i for i,s in enumerate(nifty_symbols)}
+                            rows.sort(key=lambda x: order.get(x['symbol'].upper(), 999))
+                    except Exception:
+                        pass
+                if not rows:
+                    self.send_json({'ok': False, 'error': 'NIFTY 50 data unavailable'}, 503); return
+                self.send_json({'ok':True,'rows':rows[:50],'count':len(rows[:50])})
             except Exception as e: self.send_json({'ok':False,'error':str(e)[:180]},503)
             return
         if path == '/api/nifty50/index':
