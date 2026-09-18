@@ -214,7 +214,7 @@ function renderNifty50(){
  $('niftyInfo').textContent='Showing '+a.length+' of '+NIFTY50_DIRECT.length+' NIFTY 50 stocks';
  $('niftyRows').innerHTML=a.map(x=>{
   const ch=x.change==null?null:Number(x.change);
-  return '<tr class="stockrow" onclick="openStock(\\''+encodeURIComponent(x.symbol)+'\\')"><td><b>'+x.symbol+'</b></td><td>'+niftyMoney(x.price)+'</td><td class="'+(ch!=null&&ch>=0?'green':'red')+'">'+(ch==null?'—':(ch>=0?'+':'')+ch.toFixed(2)+'%')+'</td><td>'+(x.weightage==null?'—':Number(x.weightage).toFixed(2)+'%')+'</td><td>'+(x.volume==null?'—':Number(x.volume).toLocaleString('en-IN'))+'</td><td>'+(x.turnover==null?'—':Number(x.turnover).toLocaleString('en-IN'))+'</td></tr>';
+  return '<tr class="stockrow"><td><b>'+x.symbol+'</b></td><td>'+niftyMoney(x.price)+'</td><td class="'+(ch!=null&&ch>=0?'green':'red')+'">'+(ch==null?'—':(ch>=0?'+':'')+ch.toFixed(2)+'%')+'</td><td>'+(x.weightage==null?'—':Number(x.weightage).toFixed(2)+'%')+'</td><td>'+(x.volume==null?'—':Number(x.volume).toLocaleString('en-IN'))+'</td><td>'+(x.turnover==null?'—':Number(x.turnover).toLocaleString('en-IN'))+'</td></tr>';
  }).join('')||'<tr><td colspan="6" class="empty">No matching NIFTY 50 stock.</td></tr>';
 }
 async function loadNifty50Direct(){
