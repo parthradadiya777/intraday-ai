@@ -6,10 +6,10 @@ import server
 
 LIVE_CACHE = {}
 LIVE_LOCK = threading.Lock()
-LIVE_TTL = 1.0
+LIVE_TTL = 0.8
 # Temporary offline mode: keep the app fast/stable while the proper market-data
 # provider is selected. Re-enable the data adapter later without changing UI.
-NSE_DATA_ENABLED = False
+NSE_DATA_ENABLED = True
 
 
 def _live_quote(symbol):
