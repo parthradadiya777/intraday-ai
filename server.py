@@ -7,6 +7,7 @@ from datetime import datetime
 import requests
 import app_auto
 import start
+import signal_engine
 from nsemine import live, historical
 
 # NIFTY50_DIRECT_PANEL
@@ -110,6 +111,13 @@ def scan():
                 x.update(snapshot_ai(x, max_volume))
             app_auto.AI_SNAPSHOT = {x['symbol']: x for x in rows}
 
+            # Broader context confirmation: market breadth + sector direction.
+            # This is a filter, not a guarantee, and it prevents a stock-only
+            # signal from fighting the broader market without penalty.
+            market_ctx = signal_engine.market_context(rows, NIFTY_SYMBOLS)
+            for x in rows:
+                signal_engine.enrich_row(x, market_ctx)
+
             candidates = sorted(
                 rows,
                 key=lambda x: (x['score'], abs(x['change']), x['volume']),
@@ -127,6 +135,9 @@ def scan():
                         data = future.result()
                         if data:
                             futures[future].update(data)
+                            # Re-apply market/sector confirmation after the
+                            # technical model has produced its final direction.
+                            signal_engine.enrich_row(futures[future], market_ctx)
                     except Exception:
                         pass
                     done += 1
@@ -710,7 +721,17 @@ def _nse_option_chain(symbol):
 
         call_oi = sum(float(x['call'].get('oi') or 0) for x in selected)
         put_oi = sum(float(x['put'].get('oi') or 0) for x in selected)
+        call_oi_change = sum(float(x['call'].get('oi_change') or 0) for x in selected)
+        put_oi_change = sum(float(x['put'].get('oi_change') or 0) for x in selected)
+        call_vol = sum(float(x['call'].get('volume') or 0) for x in selected)
+        put_vol = sum(float(x['put'].get('volume') or 0) for x in selected)
         pcr = (put_oi / call_oi) if call_oi else None
+        oi_denom = abs(call_oi_change) + abs(put_oi_change)
+        vol_denom = call_vol + put_vol
+        oi_pressure = ((put_oi_change - call_oi_change) / oi_denom) if oi_denom else 0.0
+        volume_pressure = ((put_vol - call_vol) / vol_denom) if vol_denom else 0.0
+        pressure = 0.60*oi_pressure + 0.40*volume_pressure
+        chain_direction = 'BULLISH' if pressure > 0.12 else 'BEARISH' if pressure < -0.12 else 'NEUTRAL'
 
         # Contract recommendation for a directional stock signal.
         # We only issue a CALL/PUT pick when the underlying scanner itself is
@@ -747,7 +768,8 @@ def _nse_option_chain(symbol):
                 candidates.append({
                     'x':x,'leg':leg,'strike':strike,'ltp':ltp,'oi':oi,'vol':vol,
                     'itm_or_atm':itm_or_atm,'dist':moneyness_penalty,
-                    'spread':spread,'iv':iv
+                    'spread':spread,'iv':iv,
+                    'greeks':signal_engine.greeks(spot, strike, iv, expiry, 'CE' if side == 'CALL' else 'PE')
                 })
             if candidates:
                 # Hard preference: ATM/ITM first. Within that group, balance
@@ -757,15 +779,29 @@ def _nse_option_chain(symbol):
                 max_oi = max(z['oi'] for z in pool) or 1.0
                 max_vol = max(z['vol'] for z in pool) or 1.0
                 max_dist = max(z['dist'] for z in pool) or 1.0
+                ivs = [z['iv'] for z in pool if z['iv'] > 0]
+                med_iv = sorted(ivs)[len(ivs)//2] if ivs else 0.0
                 def pick_score(z):
-                    liq = 0.45*(z['oi']/max_oi) + 0.30*(z['vol']/max_vol)
+                    liq = 0.35*(z['oi']/max_oi) + 0.20*(z['vol']/max_vol)
                     dist = 0.20*(1.0 - z['dist']/max_dist) if max_dist else 0.20
-                    spread_score = 0.05*max(0.0, min(1.0, 1.0-z['spread']/0.10))
-                    return 100*(liq + dist + spread_score)
+                    spread_score = 0.15*max(0.0, min(1.0, 1.0-z['spread']/0.10))
+                    delta = abs(float((z.get('greeks') or {}).get('delta') or 0))
+                    delta_score = 0.10*max(0.0, 1.0-min(abs(delta-0.55)/0.45,1.0))
+                    iv_score = 0.0
+                    if med_iv > 0 and z['iv'] > 0:
+                        iv_score = 0.10*max(0.0, min(1.0, med_iv/z['iv']))
+                    return 100*(liq + dist + spread_score + delta_score + iv_score)
                 for z in pool:
                     z['score'] = pick_score(z)
                 chosen = max(pool, key=lambda z: z['score'])
                 confidence = min(95.0, max(50.0, chosen['score']))
+                g = chosen.get('greeks') or {}
+                base_target = (sr or {}).get('target')
+                base_sl = (sr or {}).get('sl')
+                opt_target, opt_sl = signal_engine.option_target_sl(
+                    chosen['ltp'], spot, base_target, base_sl, g.get('delta'), side
+                )
+                chain_aligned = (chain_direction == 'BULLISH' and side == 'CALL') or (chain_direction == 'BEARISH' and side == 'PUT')
                 option_pick = {
                     'side': side,
                     'option_type': 'CE' if side == 'CALL' else 'PE',
@@ -779,9 +815,19 @@ def _nse_option_chain(symbol):
                     'ask': chosen['leg'].get('ask'),
                     'score': round(chosen['score'],1),
                     'confidence': round(confidence,1),
-                    'reason': ('BUY signal → nearest liquid ATM/ITM CALL selected'
-                               if side == 'CALL' else
-                               'SELL signal → nearest liquid ATM/ITM PUT selected')
+                    'delta': g.get('delta'),
+                    'gamma': g.get('gamma'),
+                    'theta': g.get('theta'),
+                    'vega': g.get('vega'),
+                    'dte': g.get('dte'),
+                    'target': opt_target,
+                    'sl': opt_sl,
+                    'chain_direction': chain_direction,
+                    'chain_pressure': round(pressure,3),
+                    'chain_aligned': chain_aligned,
+                    'reason': (('BUY signal → liquid ATM/ITM CALL; ' if side == 'CALL' else 'SELL signal → liquid ATM/ITM PUT; ')
+                               + ('option-chain pressure agrees; ' if chain_aligned else 'option-chain pressure is mixed; ')
+                               + 'Greeks/IV/spread/liquidity filters applied')
                 }
 
         return _clean_json_value({
@@ -791,6 +837,12 @@ def _nse_option_chain(symbol):
             'expiry':expiry,
             'atm':atm['strike'],
             'pcr':pcr,
+            'call_oi_change':call_oi_change,
+            'put_oi_change':put_oi_change,
+            'call_volume':call_vol,
+            'put_volume':put_vol,
+            'chain_pressure':round(pressure,3),
+            'chain_direction':chain_direction,
             'rows':selected,
             'option_pick':option_pick,
             'underlying_signal':signal,
@@ -814,13 +866,17 @@ def option_bias(symbol):
         if not j.get('ok'):
             return None
         pcr=j.get('pcr')
+        pressure=float(j.get('chain_pressure') or 0)
         bias=0.0
         if pcr is not None:
             if pcr >= 1.20: bias=5.0
             elif pcr >= 1.05: bias=2.5
             elif pcr <= 0.80: bias=-5.0
             elif pcr <= 0.95: bias=-2.5
-        data={'option_pcr':pcr,'option_bias':bias,'option_expiry':j.get('expiry'),'option_atm':j.get('atm')}
+        bias += max(-3.0, min(3.0, pressure*6.0))
+        data={'option_pcr':pcr,'option_bias':bias,'option_expiry':j.get('expiry'),'option_atm':j.get('atm'),
+              'chain_direction':j.get('chain_direction'),'chain_pressure':pressure,
+              'call_oi_change':j.get('call_oi_change'),'put_oi_change':j.get('put_oi_change')}
         with OPTION_CACHE_LOCK: OPTION_CACHE[symbol]={'ts':now,'data':data}
         return data
     except Exception:
@@ -957,6 +1013,17 @@ class FastHandler(app_auto.Handler):
             qs=urllib.parse.parse_qs(query)
             symbol=(qs.get('symbol',[''])[0] or '').upper().strip()
             self.send_json(_nse_option_chain(symbol), 200); return
+
+        if path == '/api/backtest':
+            qs=urllib.parse.parse_qs(query)
+            symbol=(qs.get('symbol',[''])[0] or '').upper().strip()
+            if not symbol:
+                self.send_json({'ok':False,'error':'Missing symbol'},400); return
+            try:
+                self.send_json(signal_engine.backtest_symbol(symbol), 200)
+            except Exception as e:
+                self.send_json({'ok':False,'error':str(e)[:180]},503)
+            return
 
         if path == '/api/live_quote':
             qs=urllib.parse.parse_qs(query)
