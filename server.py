@@ -126,7 +126,7 @@ def start_background_scan(force=False):
 app_auto.HTML = r'''<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <script src="https://unpkg.com/lightweight-charts@4.2.2/dist/lightweight-charts.standalone.production.js"></script>
-<title>Intraday AI</title>
+<title>Intraday AI • NIFTY Live v4</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#f4f6f8;color:#172033;font-family:Arial,sans-serif}
 header{background:#101827;color:#fff;padding:22px 28px}h1{margin:0;font-size:28px}.sub{opacity:.72;margin-top:5px}
@@ -155,7 +155,7 @@ tr.stockrow{cursor:pointer}tr.stockrow:hover{background:#f6f9fc}.fit{color:#0783
 @media(max-width:600px){#priceChart{height:300px}.chart-toolbar button{min-width:45px}}
 </style></head>
 <body>
-<header><h1>Intraday AI</h1><div class="sub">NSE intraday AI scanner • multi-stock search • live recommendation</div>
+<header><h1>Intraday AI</h1><div class="sub">NSE intraday AI scanner • multi-stock search • live recommendation • NIFTY Live v4</div>
 <div class="status"><span class="chip" id="market">MARKET --</span><span class="chip" id="last">Last scan: --</span><span class="chip">AUTO SCAN ON</span></div></header>
 <div class="wrap">
 <div class="panel"><div class="controls"><b>Investment Budget ₹</b><input id="budget" type="number" value="5000" min="0" step="100">
@@ -293,73 +293,100 @@ NIFTY_CACHE['error'] = 'Live NIFTY 50 quotes are not published yet; showing all 
 def refresh_nifty_cache():
     while True:
         try:
-            df = None
+            rows_by_symbol = {}
+
+            # Fastest source: the main scanner already has a fresh NSE snapshot.
             try:
-                # Use the same snapshot that powers the main scanner first.
-                df = app_auto.get_snapshot()
+                current = app_auto.STATE.get('rows', []) or []
+                for r in current:
+                    sym = str(r.get('symbol','')).strip().upper()
+                    if sym in NIFTY_SYMBOLS:
+                        rows_by_symbol[sym] = {
+                            'symbol': sym,
+                            'price': r.get('price'),
+                            'change': r.get('change'),
+                            'weightage': None,
+                            'volume': r.get('volume'),
+                            'turnover': r.get('turnover')
+                        }
             except Exception:
                 pass
-            if df is None or len(df) == 0:
+
+            # If scanner rows are not ready, ask the NSE snapshot in the background.
+            if len(rows_by_symbol) < 10:
                 try:
-                    df = live.get_index_constituents_live_snapshot('NIFTY 50')
+                    df = app_auto.get_snapshot()
                 except Exception:
                     df = None
-            rows_by_symbol = {}
-            if df is not None and len(df):
-                for _, r in df.iterrows():
-                    sym=str(r.get('symbol','')).strip()
-                    if sym.upper() in NIFTY_SYMBOLS:
-                        price = r.get('ltp')
-                        if price is None:
-                            price = r.get('close')
-                        rows_by_symbol[sym.upper()] = {
-                            'symbol':sym,'price':price,'change':r.get('changepct'),
-                            'weightage':r.get('weightage'),'volume':r.get('volume'),
-                            'turnover':r.get('turnover', r.get('traded_value'))
-                        }
-            # Enrich missing NIFTY fields from the dedicated endpoint.
-            # Failure here is harmless because the main snapshot is already usable.
+                if df is not None and len(df):
+                    for _, r in df.iterrows():
+                        sym = str(r.get('symbol','')).strip().upper()
+                        if sym in NIFTY_SYMBOLS:
+                            rows_by_symbol[sym] = {
+                                'symbol': sym,
+                                'price': r.get('close', r.get('ltp')),
+                                'change': r.get('changepct'),
+                                'weightage': None,
+                                'volume': r.get('volume'),
+                                'turnover': r.get('traded_value')
+                            }
+
+            # Optional enrichment. Failure/timeout never blocks the dashboard.
             try:
-                eq = live.get_index_constituents_live_snapshot('NIFTY 50')
+                df = live.get_index_constituents_live_snapshot('NIFTY 50')
+                if df is not None and len(df):
+                    for _, r in df.iterrows():
+                        sym = str(r.get('symbol','')).strip().upper()
+                        if sym in NIFTY_SYMBOLS:
+                            price = r.get('ltp')
+                            if price is None:
+                                price = r.get('close')
+                            if price is not None or sym not in rows_by_symbol:
+                                rows_by_symbol[sym] = {
+                                    'symbol': sym,
+                                    'price': price,
+                                    'change': r.get('changepct'),
+                                    'weightage': r.get('weightage'),
+                                    'volume': r.get('volume'),
+                                    'turnover': r.get('turnover', r.get('traded_value'))
+                                }
             except Exception:
-                eq = None
-            if eq is not None and len(eq):
-                for _, r in eq.iterrows():
-                    sym=str(r.get('symbol','')).strip()
-                    if sym.upper() in NIFTY_SYMBOLS:
-                        rows_by_symbol[sym.upper()] = {
-                            'symbol':sym,'price':r.get('ltp', r.get('close')),
-                            'change':r.get('changepct'),'weightage':r.get('weightage'),
-                            'volume':r.get('volume'),'turnover':r.get('turnover', r.get('traded_value'))
-                        }
-            # Always render all 50 slots in the fixed NIFTY 50 order.
-            # Missing live quotes are kept as placeholders instead of hiding the constituent.
-            rows=[]
-            for s in NIFTY_SYMBOLS:
-                if s in rows_by_symbol:
-                    rows.append(rows_by_symbol[s])
-                else:
-                    rows.append({'symbol':s,'price':None,'change':None,'weightage':None,'volume':None,'turnover':None})
+                pass
+
+            rows = [rows_by_symbol.get(s, {
+                'symbol': s, 'price': None, 'change': None,
+                'weightage': None, 'volume': None, 'turnover': None
+            }) for s in NIFTY_SYMBOLS]
+
+            # Index quote is isolated; a slow index request cannot hide the stocks.
             try:
-                idx=live.get_index_live_price('NIFTY 50') or {}
+                idx = live.get_index_live_price('NIFTY 50') or {}
             except Exception:
-                idx={}
-            valid=[r for r in rows if r.get('price') is not None]
-            breadth={
-                'advance':sum(1 for r in valid if float(r.get('change') or 0)>0),
-                'decline':sum(1 for r in valid if float(r.get('change') or 0)<0),
-                'unchanged':sum(1 for r in valid if float(r.get('change') or 0)==0)
+                idx = {}
+
+            valid = [r for r in rows if r.get('price') is not None]
+            breadth = {
+                'advance': sum(1 for r in valid if float(r.get('change') or 0) > 0),
+                'decline': sum(1 for r in valid if float(r.get('change') or 0) < 0),
+                'unchanged': sum(1 for r in valid if float(r.get('change') or 0) == 0)
             }
+
             with NIFTY_LOCK:
-                NIFTY_CACHE.update({'rows':rows[:50],'index':idx,'breadth':breadth,'error':'' if valid else 'Waiting for NSE snapshot','ts':time.time()})
+                NIFTY_CACHE.update({
+                    'rows': rows[:50],
+                    'index': idx,
+                    'breadth': breadth,
+                    'error': '' if valid else 'Waiting for NSE snapshot',
+                    'ts': time.time()
+                })
         except Exception as e:
             with NIFTY_LOCK:
-                NIFTY_CACHE['error']=str(e)[:180]
+                NIFTY_CACHE['error'] = str(e)[:180]
         time.sleep(5)
 
 # NIFTY50 UI injection
 _NIFTY50_PANEL = '''
-<div class="panel nifty-panel"><h2>🇮🇳 NIFTY 50</h2><div id="niftyIndex" class="nifty-index"><span class="spinner"></span> Preparing live index…</div><div id="niftyBreadth" class="nifty-breadth"><div class="breadth-box"><b>—</b><span>ADVANCE</span></div><div class="breadth-box"><b>—</b><span>DECLINE</span></div><div class="breadth-box"><b>—</b><span>UNCHANGED</span></div></div><div id="niftyMovers" class="nifty-movers"></div><div class="searchrow"><input id="niftySearch" class="search" placeholder="🔍 Search NIFTY 50 stock"><span id="niftyInfo" class="searchinfo"></span></div><div class="tablewrap nifty-table"><table><thead><tr><th>Stock</th><th>Price</th><th>Change</th><th>Weight</th><th>Volume</th><th>Turnover</th></tr></thead><tbody id="niftyRows"><tr><td colspan="6" class="empty"><span class="spinner"></span> Preparing NIFTY 50…</td></tr></tbody></table></div></div>
+<div class="panel nifty-panel"><h2>🇮🇳 NIFTY 50</h2><div id="niftyIndex" class="nifty-index"><span class="spinner"></span> Preparing live index…</div><div id="niftyBreadth" class="nifty-breadth"><div class="breadth-box"><b>—</b><span>ADVANCE</span></div><div class="breadth-box"><b>—</b><span>DECLINE</span></div><div class="breadth-box"><b>—</b><span>UNCHANGED</span></div></div><div id="niftyMovers" class="nifty-movers"></div><div class="searchrow"><input id="niftySearch" class="search" placeholder="🔍 Search NIFTY 50 stock"><span id="niftyInfo" class="searchinfo"></span></div><div class="tablewrap nifty-table"><table><thead><tr><th>Stock</th><th>Price</th><th>Change</th><th>Weight</th><th>Volume</th><th>Turnover</th></tr></thead><tbody id="niftyRows"><tr><td colspan="6" class="empty"><span class="spinner"></span> Loading 50 NIFTY stocks…</td></tr></tbody></table></div></div>
 '''
 _NIFTY50_SCRIPT = '''<style>.nifty-breadth{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}.breadth-box{background:#f6f8fa;border-radius:10px;padding:9px;text-align:center}.breadth-box b{display:block;font-size:18px}.breadth-box span{font-size:11px;color:#687386}.nifty-movers{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}.mover-box{background:#f8fafc;border:1px solid #e7ebf0;border-radius:10px;padding:10px}.mover-title{font-size:11px;color:#687386;margin-bottom:6px;font-weight:800}.mover-item{display:flex;justify-content:space-between;font-size:12px;padding:3px 0}.nifty-index{display:flex;gap:18px;align-items:center;flex-wrap:wrap;background:#f6f8fa;border-radius:12px;padding:14px;margin-bottom:14px}.nifty-main{font-size:24px;font-weight:900}.nifty-change{font-size:18px;font-weight:800}.nifty-meta{font-size:12px;color:#687386}.nifty-panel{margin:16px 18px 0}.nifty-table{overflow:visible}.nifty-table table{min-width:0}.nifty-table th,.nifty-table td{padding:9px 7px}@media(max-width:600px){.nifty-panel{margin:10px}.nifty-movers{grid-template-columns:1fr}.nifty-table table{display:block}.nifty-table thead{display:none}.nifty-table tbody{display:grid;grid-template-columns:1fr 1fr;gap:8px}.nifty-table tr{display:grid;grid-template-columns:1fr auto;gap:2px 8px;border:1px solid #e5e9ef;border-radius:10px;padding:9px;background:#fff}.nifty-table td{border:0;padding:2px 0;white-space:normal}.nifty-table td:nth-child(1){font-size:14px}.nifty-table td:nth-child(2){text-align:right}.nifty-table td:nth-child(3){text-align:right}.nifty-table td:nth-child(4),.nifty-table td:nth-child(5),.nifty-table td:nth-child(6){font-size:11px;color:#687386}.nifty-table td:nth-child(4)::before{content:'Wt ';}.nifty-table td:nth-child(5)::before{content:'Vol ';}.nifty-table td:nth-child(6)::before{content:'Turn ';}}@media(max-width:420px){.nifty-table tbody{grid-template-columns:1fr}}</style><script>
 let NIFTY50=[];const n$=id=>document.getElementById(id);function niftyMoney(x){return x==null?'—':'₹'+Number(x).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});}
