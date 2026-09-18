@@ -7,6 +7,9 @@ import server
 LIVE_CACHE = {}
 LIVE_LOCK = threading.Lock()
 LIVE_TTL = 1.0
+# Temporary offline mode: keep the app fast/stable while the proper market-data
+# provider is selected. Re-enable the data adapter later without changing UI.
+NSE_DATA_ENABLED = False
 
 
 def _live_quote(symbol):
@@ -18,6 +21,10 @@ def _live_quote(symbol):
         hit = LIVE_CACHE.get(symbol)
         if hit and now - hit["ts"] < LIVE_TTL:
             return dict(hit["data"])
+    # NSE/network adapter is intentionally disabled for now.
+    if not NSE_DATA_ENABLED:
+        return None
+
     try:
         q = server.live.get_stock_live_quotes(symbol) or {}
         price = q.get("close")
@@ -63,77 +70,23 @@ class LiveHandler(enhanced_server.EnhancedHandler):
             return
 
         if path == "/api/nifty50":
+            # Keep the NIFTY universe available locally, but do not make any
+            # network/NSE request until a proper market-data adapter is added.
             symbols = list(server.NIFTY_SYMBOLS)
-            by_symbol = {}
-            for r in server.app_auto.STATE.get("rows", []) or []:
-                s = server._clean_nifty_symbol(r.get("symbol"))
-                if s in symbols and r.get("price") is not None:
-                    by_symbol[s] = {
-                        "symbol": s,
-                        "price": r.get("price"),
-                        "change": r.get("change"),
-                        "weightage": r.get("weightage"),
-                        "volume": r.get("volume"),
-                        "turnover": r.get("turnover")
-                    }
-
-            # If the scanner has not completed, use the raw NSE snapshot.
-            if len(by_symbol) < 40:
-                try:
-                    df = server.app_auto.get_snapshot()
-                    if df is not None and len(df):
-                        for _, r in df.iterrows():
-                            s = server._clean_nifty_symbol(r.get("symbol"))
-                            if s in symbols:
-                                by_symbol[s] = {
-                                    "symbol": s,
-                                    "price": r.get("close", r.get("ltp")),
-                                    "change": r.get("changepct", r.get("change")),
-                                    "weightage": r.get("weightage"),
-                                    "volume": r.get("volume"),
-                                    "turnover": r.get("turnover", r.get("traded_value"))
-                                }
-                except Exception:
-                    pass
-
-            rows = [by_symbol.get(s, {
+            rows = [{
                 "symbol": s, "price": None, "change": None,
                 "weightage": None, "volume": None, "turnover": None
-            }) for s in symbols]
-            valid = [r for r in rows if r.get("price") is not None]
-            breadth = {
-                "advance": sum(1 for r in valid if float(r.get("change") or 0) > 0),
-                "decline": sum(1 for r in valid if float(r.get("change") or 0) < 0),
-                "unchanged": sum(1 for r in valid if float(r.get("change") or 0) == 0)
-            }
+            } for s in symbols]
             self._json({
-                "ok": True, "rows": rows, "count": len(rows),
-                "breadth": breadth,
-                "error": "" if valid else "Waiting for NSE snapshot",
-                "ts": server.app_auto.STATE.get("ts", 0)
+                "ok": True, "rows": rows, "count": 50,
+                "breadth": {"advance": 0, "decline": 0, "unchanged": 0},
+                "error": "Market data feed paused",
+                "ts": 0
             }, 200)
             return
 
         if path == "/api/nifty50/index":
-            try:
-                q = server.live.get_index_live_price("NIFTY 50") or {}
-                if q:
-                    self._json({
-                        "ok": True,
-                        "data": {
-                            "price": q.get("close"),
-                            "change": q.get("changepct"),
-                            "changepct": q.get("changepct"),
-                            "open": q.get("open"),
-                            "high": q.get("high"),
-                            "low": q.get("low"),
-                            "previous_close": q.get("previous_close")
-                        }
-                    }, 200)
-                    return
-            except Exception:
-                pass
-            self._json({"ok": False, "error": "NIFTY 50 index unavailable"}, 503)
+            self._json({"ok": False, "error": "Market data feed paused"}, 503)
             return
 
         return super().do_GET()
@@ -162,12 +115,13 @@ old_nifty_start = "async function loadNifty50(){
         turnover:x.turnover
       }));
       niftyRender();
+      n$('niftyIndex').innerHTML='<span class="small">NIFTY 50 • Market data paused</span>';
       // Movers are only a summary; the table below is the single stock list.
       const adv=Number((j.breadth||{}).advance||0), dec=Number((j.breadth||{}).decline||0), unc=Number((j.breadth||{}).unchanged||0);
       n$('niftyBreadth').innerHTML='<div class="breadth-box"><b class="green">'+adv+'</b><span>ADVANCE</span></div><div class="breadth-box"><b class="red">'+dec+'</b><span>DECLINE</span></div><div class="breadth-box"><b>'+unc+'</b><span>UNCHANGED</span></div>';
-      n$('niftyInfo').textContent='NIFTY 50 • '+source.filter(x=>x.price!=null).length+'/50 live';
+      n$('niftyInfo').textContent='NIFTY 50 • '+source.length+'/50 symbols • Market data paused';
     } else {
-      n$('niftyInfo').textContent='Waiting for NSE data…';
+      n$('niftyInfo').textContent='NIFTY 50 symbols ready • live data paused';
     }
 
     // Index quote is independent; it must never block the 50-stock table.
@@ -188,7 +142,7 @@ old_nifty_start = "async function loadNifty50(){
   }
 }
 n$('niftySearch').addEventListener('input',niftyRender);
-loadNifty50();setInterval(loadNifty50,5000);
+loadNifty50();setInterval(loadNifty50,15000);
 
 startChartLiveRefresh();"
     end = html.index(end_marker, start)
@@ -268,7 +222,7 @@ live_js = r"""
   let liveTimer=null, livePoints=[], lastT=0, lastP=null;
   function resetLive(){livePoints=[];lastT=0;lastP=null;}
   async function tick(){
-    if(!window.activeChartSymbol || !window.activeLineSeries) return;
+    if(!NSE_DATA_ENABLED || !window.activeChartSymbol || !window.activeLineSeries) return;
     const modal=document.getElementById('modal');
     if(!modal || modal.style.display!=='flex') return;
     try{
@@ -285,7 +239,7 @@ live_js = r"""
       // continuously moving broker-style LTP line without fabricating candles.
       window.activeLineSeries.setData(livePoints);
       const s=document.getElementById('chartStatus');
-      if(s) s.textContent='● LIVE LTP ₹'+p.toFixed(2)+' • NSE quote • '+new Date().toLocaleTimeString('en-IN');
+      if(s) s.textContent='● LIVE LTP ₹'+p.toFixed(2)+' • market feed paused • '+new Date().toLocaleTimeString('en-IN');
     }catch(e){}
   }
   liveTimer=setInterval(tick,1000);
@@ -298,10 +252,13 @@ server.app_auto.HTML = html
 
 def main():
     import threading
-    threading.Thread(target=server.app_auto.auto_loop, daemon=True).start()
-    threading.Thread(target=server.refresh_nifty_cache, daemon=True).start()
-    threading.Thread(target=enhanced_server.paper_loop, daemon=True).start()
-    server.start_background_scan(force=True)
+    # Do not start NSE polling/scanning while the market-data adapter is paused.
+    # This keeps startup fast and avoids repeated network calls.
+    if NSE_DATA_ENABLED:
+        threading.Thread(target=server.app_auto.auto_loop, daemon=True).start()
+        threading.Thread(target=server.refresh_nifty_cache, daemon=True).start()
+        threading.Thread(target=enhanced_server.paper_loop, daemon=True).start()
+        server.start_background_scan(force=True)
     port = int(__import__("os").environ.get("PORT", "10000"))
     server.app_auto.ThreadingHTTPServer(("0.0.0.0", port), LiveHandler).serve_forever()
 
