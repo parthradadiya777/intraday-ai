@@ -158,13 +158,6 @@ tr.stockrow{cursor:pointer}tr.stockrow:hover{background:#f6f9fc}.fit{color:#0783
 <header><h1>Intraday AI</h1><div class="sub">NSE intraday AI scanner • multi-stock search • live recommendation</div>
 <div class="status"><span class="chip" id="market">MARKET --</span><span class="chip" id="last">Last scan: --</span><span class="chip">AUTO SCAN ON</span></div></header>
 <div class="wrap">
-<div class="panel" id="nifty50Panel">
-<h2>🇮🇳 NIFTY 50</h2>
-<div id="niftyIndex" style="padding:12px;background:#f6f8fa;border-radius:10px;margin-bottom:12px">Loading NIFTY 50…</div>
-<div class="searchrow"><input id="niftySearch" class="search" placeholder="🔍 Search NIFTY 50 stock"><span id="niftyInfo" class="searchinfo"></span></div>
-<div class="tablewrap"><table><thead><tr><th>Stock</th><th>Price</th><th>Change</th><th>Weight</th><th>Volume</th><th>Turnover</th></tr></thead><tbody id="niftyRows"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody></table></div>
-</div>
-
 <div class="panel"><div class="controls"><b>Investment Budget ₹</b><input id="budget" type="number" value="5000" min="0" step="100">
 <button onclick="scanNow()">SCAN NSE</button><span id="msg">Ready</span></div>
 <div class="hint">Budget changes are applied immediately. Recommendations only show stocks that fit the current budget.</div>
@@ -323,10 +316,18 @@ def refresh_nifty_cache():
                                 'weightage':None,'volume':r.get('volume'),
                                 'turnover':r.get('traded_value')
                             }
-            rows=[rows_by_symbol[s] for s in NIFTY_SYMBOLS if s in rows_by_symbol]
+            # Always render all 50 slots in the fixed NIFTY 50 order.
+            # Missing live quotes are kept as placeholders instead of hiding the constituent.
+            rows=[]
+            for s in NIFTY_SYMBOLS:
+                if s in rows_by_symbol:
+                    rows.append(rows_by_symbol[s])
+                else:
+                    rows.append({'symbol':s,'price':None,'change':None,'weightage':None,'volume':None,'turnover':None})
             idx=live.get_index_live_price('NIFTY 50') or {}
             with NIFTY_LOCK:
-                NIFTY_CACHE.update({'rows':rows[:50],'index':idx,'error':'' if len(rows)>=50 else 'NSE returned '+str(len(rows))+' NIFTY 50 stocks','ts':time.time()})
+                missing=sum(1 for r in rows if r.get('price') is None)
+                NIFTY_CACHE.update({'rows':rows[:50],'index':idx,'error':('Live quote missing for '+str(missing)+' NIFTY 50 stock(s)') if missing else '','ts':time.time()})
         except Exception as e:
             with NIFTY_LOCK:
                 NIFTY_CACHE['error']=str(e)[:180]
@@ -366,35 +367,74 @@ class FastHandler(app_auto.Handler):
                 if interval_raw in ('D','W','M'):
                     interval = interval_raw
                     days = 500 if interval == 'D' else 1500
+                    df = historical.get_stock_historical_data(
+                        symbol,
+                        __import__('datetime').datetime.now() - __import__('datetime').timedelta(days=days),
+                        __import__('datetime').datetime.now(),
+                        interval=interval
+                    )
                 else:
                     interval = int(interval_raw)
                     if interval not in (1,3,5,10,15,30,60):
                         interval = 5
-                    days = 7 if interval <= 15 else 30
-                end = __import__('datetime').datetime.now()
-                start_dt = end - __import__('datetime').timedelta(days=days)
-                df = historical.get_stock_historical_data(symbol, start_dt, end, interval=interval)
+                    # Prefer NSE's current-day candle endpoint for intraday charts.
+                    df = live.get_stock_intraday_tick_by_tick_data(symbol, candle_interval=interval)
+                    # Before/after market hours, fall back to historical intraday data.
+                    if df is None or len(df) == 0:
+                        days = 7 if interval <= 15 else 30
+                        df = historical.get_stock_historical_data(
+                            symbol,
+                            __import__('datetime').datetime.now() - __import__('datetime').timedelta(days=days),
+                            __import__('datetime').datetime.now(),
+                            interval=interval
+                        )
+
                 if df is None or len(df) == 0:
-                    self.send_json({'ok': False, 'error': 'No chart data available'}, 404); return
-                cols = {str(x).lower().strip(): x for x in df.columns}
-                def pick(name, default=None):
-                    col = cols.get(name)
-                    return df[col] if col is not None else default
+                    self.send_json({'ok': False, 'error': 'No chart data available for this timeframe'}, 404); return
+
+                cols = {str(x).lower().strip().replace(' ', '_'): x for x in df.columns}
+                def find_col(*names):
+                    for name in names:
+                        key = name.lower().strip().replace(' ', '_')
+                        if key in cols:
+                            return cols[key]
+                    return None
+
+                ocol = find_col('open','open_price','openprice')
+                hcol = find_col('high','high_price','highprice')
+                lcol = find_col('low','low_price','lowprice')
+                ccol = find_col('close','close_price','closeprice','ltp')
+                vcol = find_col('volume','vol')
+                if not all((ocol, hcol, lcol, ccol)):
+                    self.send_json({'ok': False, 'error': 'NSE chart format changed; OHLC fields unavailable'}, 503); return
+
                 out = []
                 for idx, row in df.iterrows():
                     try:
-                        o = float(row[cols['open']]); h = float(row[cols['high']])
-                        lo = float(row[cols['low']]); cl = float(row[cols['close']])
-                        vol = float(row[cols['volume']]) if 'volume' in cols else 0
+                        o = float(row[ocol]); h = float(row[hcol])
+                        lo = float(row[lcol]); cl = float(row[ccol])
+                        vol = float(row[vcol]) if vcol is not None and row[vcol] is not None else 0.0
                         ts = idx
-                        if hasattr(ts, 'timestamp'):
-                            t = int(ts.timestamp())
-                        else:
-                            t = int(__import__('datetime').datetime.fromisoformat(str(ts)).timestamp())
+                        if not hasattr(ts, 'timestamp'):
+                            ts = __import__('pandas').to_datetime(ts)
+                        if hasattr(ts, 'to_pydatetime'):
+                            ts = ts.to_pydatetime()
+                        t = int(ts.timestamp())
+                        if h < max(o, cl) or lo > min(o, cl):
+                            continue
                         out.append({'time': t, 'open': o, 'high': h, 'low': lo, 'close': cl, 'volume': vol})
                     except Exception:
                         continue
-                self.send_json({'ok': True, 'symbol': symbol, 'interval': str(interval), 'rows': out[-1500:]})
+
+                # Lightweight Charts requires strictly ascending, unique timestamps.
+                dedup = {}
+                for x in out:
+                    dedup[x['time']] = x
+                out = [dedup[k] for k in sorted(dedup)]
+                out = out[-1500:]
+                if not out:
+                    self.send_json({'ok': False, 'error': 'NSE returned chart rows but no valid OHLC candles'}, 503); return
+                self.send_json({'ok': True, 'symbol': symbol, 'interval': str(interval), 'rows': out})
             except Exception as e:
                 self.send_json({'ok': False, 'error': str(e)[:180]}, 503)
             return
