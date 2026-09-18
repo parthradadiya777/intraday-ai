@@ -193,7 +193,7 @@ tr.stockrow{cursor:pointer}tr.stockrow:hover{background:#f6f9fc}.fit{color:#0783
 .empty{padding:20px;text-align:center;color:#697386}
 .modal{position:fixed;inset:0;background:#0008;display:none;align-items:center;justify-content:center;z-index:50;padding:15px}.modalbox{background:#fff;border-radius:16px;width:min(760px,100%);max-height:90vh;overflow:auto;padding:20px}
 .modalhead{display:flex;justify-content:space-between;align-items:center}.close{background:#e9eef4;color:#172033}.detailgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:15px}.detail{background:#f6f8fa;border-radius:10px;padding:11px}.detail b{display:block;font-size:11px;color:#687386;margin-bottom:5px}.detail span{font-size:17px;font-weight:800}
-.options-panel{margin-top:15px;border:1px solid #e3e8ee;border-radius:12px;padding:12px}.options-head{display:flex;justify-content:space-between;align-items:center;gap:10px}.options-head button{padding:7px 10px}.options-summary{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}.opt-chip{background:#f5f7fa;border-radius:9px;padding:8px 10px;font-size:12px}.callcell{color:#07833a}.putcell{color:#c62828}@media(max-width:600px){.options-panel table{min-width:720px}}.spinner{display:inline-block;width:13px;height:13px;border:2px solid #cbd5e1;border-top-color:#111827;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px}@keyframes spin{to{transform:rotate(360deg)}}
+.options-panel{margin-top:15px;border:1px solid #e3e8ee;border-radius:12px;padding:12px}.option-pick{margin:10px 0 12px;border:1px solid #dbe4ee;border-radius:12px;padding:12px;background:#f8fafc}.option-pick-head{display:flex;justify-content:space-between;align-items:center;gap:10px}.option-pick-side{font-size:18px;font-weight:900}.option-pick-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:9px}.option-pick-cell{background:#fff;border-radius:8px;padding:8px}.option-pick-cell b{display:block;font-size:10px;color:#687386;margin-bottom:3px}.option-pick-note{font-size:11px;color:#687386;margin-top:8px}@media(max-width:600px){.option-pick-grid{grid-template-columns:repeat(2,1fr)}}.options-head{display:flex;justify-content:space-between;align-items:center;gap:10px}.options-head button{padding:7px 10px}.options-summary{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}.opt-chip{background:#f5f7fa;border-radius:9px;padding:8px 10px;font-size:12px}.callcell{color:#07833a}.putcell{color:#c62828}@media(max-width:600px){.options-panel table{min-width:720px}}.spinner{display:inline-block;width:13px;height:13px;border:2px solid #cbd5e1;border-top-color:#111827;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px}@keyframes spin{to{transform:rotate(360deg)}}
 @media(max-width:900px){.recommend{grid-template-columns:1fr}.detailgrid{grid-template-columns:repeat(2,1fr)}.wrap{padding:10px}}
 @media(max-width:600px){header{padding:15px 12px}h1{font-size:23px}.panel{padding:13px}.controls input,.controls button,.search{width:100%;min-height:44px}.searchrow{display:grid;grid-template-columns:1fr}.recommend{grid-template-columns:1fr}.detailgrid{grid-template-columns:1fr 1fr}table{min-width:1000px}th,td{font-size:12px;padding:9px 7px}}
 
@@ -239,6 +239,7 @@ tr.stockrow{cursor:pointer}tr.stockrow:hover{background:#f6f9fc}.fit{color:#0783
   <div class="options-head"><b>🟢 CALL / 🔴 PUT — Options Analysis</b><button onclick="loadOptions()">REFRESH</button></div>
   <div id="optionsStatus" class="small">Loading option chain…</div>
   <div id="optionsSummary" class="options-summary"></div>
+  <div id="optionPick" class="option-pick" style="display:none"></div>
   <div class="tablewrap"><table><thead><tr><th>Call LTP</th><th>Call OI</th><th>Call OI Δ</th><th>Strike</th><th>Put OI Δ</th><th>Put OI</th><th>Put LTP</th></tr></thead><tbody id="optionsRows"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody></table></div>
 </div>
 <div id="details" class="detailgrid"></div>
@@ -359,9 +360,20 @@ async function loadOptions(){
     $('optionsStatus').textContent='Expiry '+(j.expiry||'—')+' • ATM '+j.atm+' • NSE option chain';
     const pcr=j.pcr==null?'—':Number(j.pcr).toFixed(2);
     $('optionsSummary').innerHTML='<span class="opt-chip">Spot <b>'+money(j.spot)+'</b></span><span class="opt-chip">ATM <b>'+j.atm+'</b></span><span class="opt-chip">PCR <b>'+pcr+'</b></span><span class="opt-chip">Option data feeds prediction</span>';
+    if(j.option_pick){
+      const p=j.option_pick;
+      const sideClass=p.side==='CALL'?'callcell':'putcell';
+      $('optionPick').style.display='block';
+      $('optionPick').innerHTML='<div class="option-pick-head"><div><span class="option-pick-side '+sideClass+'">AI OPTION PICK: '+p.side+' ('+p.option_type+')</span><div class="option-pick-note">'+p.reason+'</div></div><span class="badge">Confidence '+Number(p.confidence).toFixed(1)+'%</span></div><div class="option-pick-grid"><div class="option-pick-cell"><b>STRIKE</b><strong>'+p.strike+'</strong></div><div class="option-pick-cell"><b>LTP</b><strong>'+money(p.ltp)+'</strong></div><div class="option-pick-cell"><b>OI</b><strong>'+Number(p.oi).toLocaleString('en-IN')+'</strong></div><div class="option-pick-cell"><b>OI Δ</b><strong>'+val(p.oi_change)+'</strong></div><div class="option-pick-cell"><b>IV</b><strong>'+val(p.iv)+'</strong></div></div><div class="option-pick-note">Selection uses underlying AI signal + ATM/ITM preference + option liquidity (OI/volume) + bid/ask quality. It is a model score, not a guaranteed win rate.</div>';
+    }else{
+      $('optionPick').style.display='block';
+      $('optionPick').innerHTML='<b>AI OPTION PICK: —</b><div class="option-pick-note">No directional BUY/SELL signal or no liquid option contract. WAIT stocks are not given a forced CALL/PUT.</div>';
+    }
     $('optionsRows').innerHTML=j.rows.map(x=>'<tr><td class="callcell">'+val(x.call.ltp)+'</td><td>'+val(x.call.oi)+'</td><td>'+val(x.call.oi_change)+'</td><td><b>'+x.strike+'</b></td><td>'+val(x.put.oi_change)+'</td><td>'+val(x.put.oi)+'</td><td class="putcell">'+val(x.put.ltp)+'</td></tr>').join('');
   }catch(e){
     $('optionsStatus').textContent='Options unavailable: '+e.message;
+    $('optionPick').style.display='block';
+    $('optionPick').innerHTML='<b>AI OPTION PICK: —</b><div class="option-pick-note">Option chain is unavailable, so no CALL/PUT contract is recommended.</div>';
     $('optionsRows').innerHTML='<tr><td colspan="7" class="empty">No option-chain data for this stock.</td></tr>';
   }
 }
