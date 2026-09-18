@@ -7,7 +7,6 @@ import start
 from nsemine import live
 
 # NIFTY50_DIRECT_PANEL
-from nsemine import live
 
 app_auto.STATE.setdefault('progress', 0)
 app_auto.STATE.setdefault('progress_text', 'Ready')
@@ -314,7 +313,7 @@ class FastHandler(app_auto.Handler):
             except Exception:pass
             self.send_json({'ok':True,'data':data,'refined':refined});return
 
-        if (path == '/api/nifty50') {
+        if path == '/api/nifty50':
             try:
                 df = live.get_index_constituents_live_snapshot('NIFTY 50')
                 if df is None or len(df) == 0:
