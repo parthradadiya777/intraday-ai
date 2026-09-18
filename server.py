@@ -390,7 +390,10 @@ async function loadOptions(){
       if(bj.ok){
         $('optionBacktest').innerHTML='<b>📊 HISTORICAL SETUP CHECK</b><div class="option-pick-grid"><div class="option-pick-cell"><b>TESTED</b><strong>'+val(bj.signals_tested)+'</strong></div><div class="option-pick-cell"><b>TARGET HIT</b><strong>'+val(bj.target_hits)+'</strong></div><div class="option-pick-cell"><b>SL HIT</b><strong>'+val(bj.sl_hits)+'</strong></div><div class="option-pick-cell"><b>TIMEOUT</b><strong>'+val(bj.timeouts)+'</strong></div><div class="option-pick-cell"><b>HIT RATE</b><strong>'+val(bj.historical_hit_rate)+'%</strong></div></div><div class="option-pick-note">'+bj.note+'</div>';
         if(bj.historical_hit_rate!=null && Number(bj.historical_hit_rate)<35 && j.option_pick){
-          $('optionPick').innerHTML='<div class="option-pick-head"><div><span class="option-pick-side">⚠️ WAIT — SETUP VALIDATION WEAK</span><div class="option-pick-note">The live chain may point to '+j.option_pick.side+' '+j.option_pick.strike+', but the recent underlying setup check is only '+Number(bj.historical_hit_rate).toFixed(1)+'%. No trade plan is activated.</div></div><span class="badge">Hit rate '+Number(bj.historical_hit_rate).toFixed(1)+'%</span></div>';
+          // Keep the directional signal identical to the stock recommendation.
+          // Historical validation is a separate trade-eligibility filter; it
+          // must never rewrite BUY/SELL into a contradictory WAIT in the modal.
+          $('optionPick').innerHTML='<div class="option-pick-head"><div><span class="option-pick-side">⚠️ '+j.option_pick.side+' ('+j.option_pick.option_type+') — TRADE PLAN BLOCKED</span><div class="option-pick-note">Underlying signal remains <b>'+val(j.option_pick.side==='CALL'?'BUY':'SELL')+'</b>. Recent setup validation is only '+Number(bj.historical_hit_rate).toFixed(1)+'%, so entry/target/SL are not activated.</div></div><span class="badge">Hit rate '+Number(bj.historical_hit_rate).toFixed(1)+'%</span></div>';
         }
       }else{
         $('optionBacktest').innerHTML='<b>📊 HISTORICAL SETUP CHECK</b><div class="option-pick-note">'+(bj.error||'Historical data unavailable')+'</div>';
