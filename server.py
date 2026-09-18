@@ -204,7 +204,7 @@ tr.stockrow{cursor:pointer}tr.stockrow:hover{background:#f6f9fc}.fit{color:#0783
 .empty{padding:20px;text-align:center;color:#697386}
 .modal{position:fixed;inset:0;background:#0008;display:none;align-items:center;justify-content:center;z-index:50;padding:15px}.modalbox{background:#fff;border-radius:16px;width:min(760px,100%);max-height:90vh;overflow:auto;padding:20px}
 .modalhead{display:flex;justify-content:space-between;align-items:center}.close{background:#e9eef4;color:#172033}.detailgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:15px}.detail{background:#f6f8fa;border-radius:10px;padding:11px}.detail b{display:block;font-size:11px;color:#687386;margin-bottom:5px}.detail span{font-size:17px;font-weight:800}
-.options-panel{margin-top:15px;border:1px solid #e3e8ee;border-radius:12px;padding:12px}.option-pick{margin:10px 0 12px;border:1px solid #dbe4ee;border-radius:12px;padding:12px;background:#f8fafc}.option-pick-head{display:flex;justify-content:space-between;align-items:center;gap:10px}.option-pick-side{font-size:18px;font-weight:900}.option-pick-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:9px}.option-pick-cell{background:#fff;border-radius:8px;padding:8px}.option-pick-cell b{display:block;font-size:10px;color:#687386;margin-bottom:3px}.option-pick-note{font-size:11px;color:#687386;margin-top:8px}@media(max-width:600px){.option-pick-grid{grid-template-columns:repeat(2,1fr)}}.options-head{display:flex;justify-content:space-between;align-items:center;gap:10px}.options-head button{padding:7px 10px}.options-summary{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}.opt-chip{background:#f5f7fa;border-radius:9px;padding:8px 10px;font-size:12px}.callcell{color:#07833a}.putcell{color:#c62828}@media(max-width:600px){.options-panel table{min-width:720px}}.spinner{display:inline-block;width:13px;height:13px;border:2px solid #cbd5e1;border-top-color:#111827;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px}@keyframes spin{to{transform:rotate(360deg)}}
+.options-panel{margin-top:15px;border:1px solid #e3e8ee;border-radius:12px;padding:12px}.option-pick{margin:10px 0 12px;border:1px solid #dbe4ee;border-radius:12px;padding:12px;background:#f8fafc}.option-pick-head{display:flex;justify-content:space-between;align-items:center;gap:10px}.option-pick-side{font-size:18px;font-weight:900}.option-pick-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:9px}.option-pick-cell{background:#fff;border-radius:8px;padding:8px}.option-pick-cell b{display:block;font-size:10px;color:#687386;margin-bottom:3px}.trade-plan{margin-top:10px;border:1px solid #d9e3ef;border-radius:10px;padding:10px;background:#fff}.trade-plan-title{font-weight:900;margin-bottom:7px}.trade-plan-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}.trade-plan-cell{background:#f6f8fa;border-radius:8px;padding:8px}.trade-plan-cell b{display:block;font-size:10px;color:#687386}.trade-plan-cell strong{font-size:15px}.trade-warning{margin-top:8px;padding:8px;border-radius:8px;background:#fff7df;color:#8a5a00;font-size:12px;font-weight:700}.option-pick-note{font-size:11px;color:#687386;margin-top:8px}@media(max-width:600px){.option-pick-grid{grid-template-columns:repeat(2,1fr)}}.options-head{display:flex;justify-content:space-between;align-items:center;gap:10px}.options-head button{padding:7px 10px}.options-summary{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}.opt-chip{background:#f5f7fa;border-radius:9px;padding:8px 10px;font-size:12px}.callcell{color:#07833a}.putcell{color:#c62828}@media(max-width:600px){.options-panel table{min-width:720px}}.spinner{display:inline-block;width:13px;height:13px;border:2px solid #cbd5e1;border-top-color:#111827;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px}@keyframes spin{to{transform:rotate(360deg)}}
 @media(max-width:900px){.recommend{grid-template-columns:1fr}.detailgrid{grid-template-columns:repeat(2,1fr)}.wrap{padding:10px}}
 @media(max-width:600px){header{padding:15px 12px}h1{font-size:23px}.panel{padding:13px}.controls input,.controls button,.search{width:100%;min-height:44px}.searchrow{display:grid;grid-template-columns:1fr}.recommend{grid-template-columns:1fr}.detailgrid{grid-template-columns:1fr 1fr}table{min-width:1000px}th,td{font-size:12px;padding:9px 7px}}
 
@@ -375,7 +375,8 @@ async function loadOptions(){
       const p=j.option_pick;
       const sideClass=p.side==='CALL'?'callcell':'putcell';
       $('optionPick').style.display='block';
-      $('optionPick').innerHTML='<div class="option-pick-head"><div><span class="option-pick-side '+sideClass+'">AI OPTION PICK: '+p.side+' ('+p.option_type+')</span><div class="option-pick-note">'+p.reason+'</div></div><span class="badge">Confidence '+Number(p.confidence).toFixed(1)+'%</span></div><div class="option-pick-grid"><div class="option-pick-cell"><b>STRIKE</b><strong>'+p.strike+'</strong></div><div class="option-pick-cell"><b>ENTRY LTP</b><strong>'+money(p.ltp)+'</strong></div><div class="option-pick-cell"><b>TARGET</b><strong class="green">'+money(p.target)+'</strong></div><div class="option-pick-cell"><b>STOP LOSS</b><strong class="red">'+money(p.sl)+'</strong></div><div class="option-pick-cell"><b>IV</b><strong>'+val(p.iv)+'</strong></div><div class="option-pick-cell"><b>DELTA</b><strong>'+val(p.delta)+'</strong></div><div class="option-pick-cell"><b>GAMMA</b><strong>'+val(p.gamma)+'</strong></div><div class="option-pick-cell"><b>THETA/DAY</b><strong>'+val(p.theta)+'</strong></div><div class="option-pick-cell"><b>VEGA</b><strong>'+val(p.vega)+'</strong></div><div class="option-pick-cell"><b>OI Δ</b><strong>'+val(p.oi_change)+'</strong></div></div><div class="option-pick-note">Chain: <b>'+val(p.chain_direction)+'</b> · Pressure '+val(p.chain_pressure)+' · '+(p.chain_aligned?'Direction confirmed by chain':'Chain is mixed')+'. Greeks are model-calculated from spot, strike, IV and expiry; not an NSE-provided guarantee.</div>';
+      const budget=Number($('budget').value||0), lot=Number(p.lot_size||j.lot_size||0), oneLot=lot>0?Number(p.ltp)*lot:null, maxLots=oneLot?Math.floor(budget/oneLot):null, qty=lot>0?Math.max(0,maxLots)*lot:null, investment=lot>0?maxLots*oneLot:null, maxLoss=(p.sl!=null&&p.ltp!=null&&lot>0&&maxLots>0)?Math.max(0,(Number(p.ltp)-Number(p.sl))*qty):null, reward=(p.target!=null&&p.ltp!=null&&lot>0&&maxLots>0)?Math.max(0,(Number(p.target)-Number(p.ltp))*qty):null, rr=(maxLoss&&reward)?reward/maxLoss:null;
+      $('optionPick').innerHTML='<div class="option-pick-head"><div><span class="option-pick-side '+sideClass+'">AI OPTION PICK: '+p.side+' ('+p.option_type+')</span><div class="option-pick-note">'+p.reason+'</div></div><span class="badge">Confidence '+Number(p.confidence).toFixed(1)+'%</span></div><div class="trade-plan"><div class="trade-plan-title">🎯 AI OPTION TRADE PLAN</div><div class="trade-plan-grid"><div class="trade-plan-cell"><b>STRIKE</b><strong>'+p.strike+'</strong></div><div class="trade-plan-cell"><b>ENTRY</b><strong>'+money(p.ltp)+'</strong></div><div class="trade-plan-cell"><b>LOT SIZE</b><strong>'+val(lot)+'</strong></div><div class="trade-plan-cell"><b>LOTS</b><strong>'+val(maxLots==null?1:maxLots)+'</strong></div><div class="trade-plan-cell"><b>QTY</b><strong>'+val(qty==null?lot:qty)+'</strong></div><div class="trade-plan-cell"><b>INVESTMENT</b><strong>'+money(investment==null?oneLot:investment)+'</strong></div><div class="trade-plan-cell"><b>STOP LOSS</b><strong class="red">'+money(p.sl)+'</strong></div><div class="trade-plan-cell"><b>TARGET</b><strong class="green">'+money(p.target)+'</strong></div><div class="trade-plan-cell"><b>MAX LOSS</b><strong class="red">'+money(maxLoss)+'</strong></div><div class="trade-plan-cell"><b>EXPECTED REWARD</b><strong class="green">'+money(reward)+'</strong></div><div class="trade-plan-cell"><b>R:R</b><strong>'+ (rr==null?'—':'1:'+Number(rr).toFixed(2))+'</strong></div><div class="trade-plan-cell"><b>UNDERLYING TARGET</b><strong>'+money(p.underlying_target)+'</strong></div></div>'+((lot>0&&maxLots<1)?'<div class="trade-warning">⚠️ Current ₹'+budget.toLocaleString('en-IN')+' budget is below 1 option lot (₹'+Number(oneLot).toFixed(2)+'). Do not treat this as an affordable trade.</div>':'')+'</div><div class="option-pick-grid"><div class="option-pick-cell"><b>IV</b><strong>'+val(p.iv)+'</strong></div><div class="option-pick-cell"><b>DELTA</b><strong>'+val(p.delta)+'</strong></div><div class="option-pick-cell"><b>GAMMA</b><strong>'+val(p.gamma)+'</strong></div><div class="option-pick-cell"><b>THETA/DAY</b><strong>'+val(p.theta)+'</strong></div><div class="option-pick-cell"><b>VEGA</b><strong>'+val(p.vega)+'</strong></div><div class="option-pick-cell"><b>OI Δ</b><strong>'+val(p.oi_change)+'</strong></div></div><div class="option-pick-note">Chain: <b>'+val(p.chain_direction)+'</b> · Pressure '+val(p.chain_pressure)+' · '+(p.chain_aligned?'Direction confirmed by chain':'Chain is mixed')+'. Greeks are model-calculated from spot, strike, IV and expiry; not an NSE-provided guarantee.</div>';
     }else{
       $('optionPick').style.display='block';
       $('optionPick').innerHTML='<b>AI OPTION PICK: —</b><div class="option-pick-note">No directional BUY/SELL signal or no liquid option contract. WAIT stocks are not given a forced CALL/PUT.</div>';
@@ -388,6 +389,9 @@ async function loadOptions(){
       const br=await fetch('/api/backtest?symbol='+encodeURIComponent(activeChartSymbol),{cache:'no-store'}); const bj=await br.json();
       if(bj.ok){
         $('optionBacktest').innerHTML='<b>📊 HISTORICAL SETUP CHECK</b><div class="option-pick-grid"><div class="option-pick-cell"><b>TESTED</b><strong>'+val(bj.signals_tested)+'</strong></div><div class="option-pick-cell"><b>TARGET HIT</b><strong>'+val(bj.target_hits)+'</strong></div><div class="option-pick-cell"><b>SL HIT</b><strong>'+val(bj.sl_hits)+'</strong></div><div class="option-pick-cell"><b>TIMEOUT</b><strong>'+val(bj.timeouts)+'</strong></div><div class="option-pick-cell"><b>HIT RATE</b><strong>'+val(bj.historical_hit_rate)+'%</strong></div></div><div class="option-pick-note">'+bj.note+'</div>';
+        if(bj.historical_hit_rate!=null && Number(bj.historical_hit_rate)<35 && j.option_pick){
+          $('optionPick').innerHTML='<div class="option-pick-head"><div><span class="option-pick-side">⚠️ WAIT — SETUP VALIDATION WEAK</span><div class="option-pick-note">The live chain may point to '+j.option_pick.side+' '+j.option_pick.strike+', but the recent underlying setup check is only '+Number(bj.historical_hit_rate).toFixed(1)+'%. No trade plan is activated.</div></div><span class="badge">Hit rate '+Number(bj.historical_hit_rate).toFixed(1)+'%</span></div>';
+        }
       }else{
         $('optionBacktest').innerHTML='<b>📊 HISTORICAL SETUP CHECK</b><div class="option-pick-note">'+(bj.error||'Historical data unavailable')+'</div>';
       }
@@ -634,8 +638,29 @@ def _nse_option_chain(symbol):
         contract_url = 'https://www.nseindia.com/api/option-chain-contract-info'
         contract = fetch_json(sess, contract_url, {'symbol': api_symbol})
         expiries = []
+        lot_size = None
         if isinstance(contract, dict):
             expiries = contract.get('expiryDates') or contract.get('records', {}).get('expiryDates') or []
+            # NSE contract-info has changed shape over time. Try the common
+            # lot-size keys without hard-coding a symbol-specific value.
+            def _find_lot(obj):
+                if isinstance(obj, dict):
+                    for k in ('lotSize','lot_size','marketLot','market_lot','contractSize','contract_size'):
+                        v=obj.get(k)
+                        try:
+                            if v is not None and float(v)>0:
+                                return int(float(v))
+                        except Exception:
+                            pass
+                    for v in obj.values():
+                        z=_find_lot(v)
+                        if z: return z
+                elif isinstance(obj, list):
+                    for v in obj:
+                        z=_find_lot(v)
+                        if z: return z
+                return None
+            lot_size = _find_lot(contract)
         expiry = expiries[0] if expiries else None
 
         raw = None
@@ -809,6 +834,23 @@ def _nse_option_chain(symbol):
                 g = chosen.get('greeks') or {}
                 base_target = (sr or {}).get('target')
                 base_sl = (sr or {}).get('sl')
+                # Always produce actionable underlying levels when the
+                # technical model did not provide them. ATR is preferred;
+                # percentage floors prevent zero/tiny levels.
+                try:
+                    S=float(spot)
+                    atr=float((sr or {}).get('atr') or 0)
+                    risk=max(S*0.004, atr*1.15, S*0.0025)
+                    reward=max(risk*1.8, S*0.006)
+                    if base_target is None or base_sl is None:
+                        if signal == 'BUY':
+                            base_target = round(S+reward,2)
+                            base_sl = round(S-risk,2)
+                        else:
+                            base_target = round(S-reward,2)
+                            base_sl = round(S+risk,2)
+                except Exception:
+                    pass
                 opt_target, opt_sl = signal_engine.option_target_sl(
                     chosen['ltp'], spot, base_target, base_sl, g.get('delta'), side
                 )
@@ -833,6 +875,11 @@ def _nse_option_chain(symbol):
                     'dte': g.get('dte'),
                     'target': opt_target,
                     'sl': opt_sl,
+                    'underlying_target': base_target,
+                    'underlying_sl': base_sl,
+                    'lot_size': lot_size,
+                    'lots': 1 if lot_size else None,
+                    'contract_qty': lot_size if lot_size else None,
                     'chain_direction': chain_direction,
                     'chain_pressure': round(pressure,3),
                     'chain_aligned': chain_aligned,
@@ -854,6 +901,7 @@ def _nse_option_chain(symbol):
             'put_volume':put_vol,
             'chain_pressure':round(pressure,3),
             'chain_direction':chain_direction,
+            'lot_size':lot_size,
             'rows':selected,
             'option_pick':option_pick,
             'underlying_signal':signal,
