@@ -393,7 +393,7 @@ async function loadOptions(){
           // Keep the directional signal identical to the stock recommendation.
           // Historical validation is a separate trade-eligibility filter; it
           // must never rewrite BUY/SELL into a contradictory WAIT in the modal.
-          $('optionPick').innerHTML='<div class="option-pick-head"><div><span class="option-pick-side">⚠️ '+j.option_pick.side+' ('+j.option_pick.option_type+') — TRADE PLAN BLOCKED</span><div class="option-pick-note">Underlying signal remains <b>'+val(j.option_pick.side==='CALL'?'BUY':'SELL')+'</b>. Recent setup validation is only '+Number(bj.historical_hit_rate).toFixed(1)+'%, so entry/target/SL are not activated.</div></div><span class="badge">Hit rate '+Number(bj.historical_hit_rate).toFixed(1)+'%</span></div>';
+          $('optionPick').innerHTML='<div class="option-pick-head"><div><span class="option-pick-side '+(j.option_pick.side==='CALL'?'buy':'sell')+'">🟢 '+j.option_pick.side+' ('+j.option_pick.option_type+') — LIVE OPTION SIGNAL</span><div class="option-pick-note">Current underlying signal remains <b>'+val(j.option_pick.side==='CALL'?'BUY':'SELL')+'</b>. The historical result is shown separately as a warning and does not cancel the current live signal.</div></div><span class="badge">Historical hit rate '+Number(bj.historical_hit_rate).toFixed(1)+'%</span></div><div class="trade-warning">⚠️ <b>Historical Validation Weak:</b> past setup hit rate was '+Number(bj.historical_hit_rate).toFixed(1)+'%. This is a historical-performance warning, not a cancellation of the current live signal.</div>';
         }
       }else{
         $('optionBacktest').innerHTML='<b>📊 HISTORICAL SETUP CHECK</b><div class="option-pick-note">'+(bj.error||'Historical data unavailable')+'</div>';
