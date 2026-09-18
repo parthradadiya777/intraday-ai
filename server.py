@@ -4,6 +4,7 @@ import time
 import urllib.parse
 import app_auto
 import start
+from nsemine import live
 
 app_auto.STATE.setdefault('progress', 0)
 app_auto.STATE.setdefault('progress_text', 'Ready')
