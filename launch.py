@@ -139,36 +139,67 @@ class LiveHandler(enhanced_server.EnhancedHandler):
         return super().do_GET()
 
 
-# Keep the existing NIFTY panel, but make its chart price visibly update
-# every second from /api/live_quote instead of waiting for a 5-second candle
-# refresh. This is still NSE web/scrape data, not an exchange tick feed.
+# UI hotfix: use the scanner state as the primary NIFTY 50 feed and keep a
+# separate one-second live price trail in the chart. This avoids waiting for
+# the slower dedicated constituent endpoint and avoids creating a new candle
+# every second.
 html = server.app_auto.HTML
-live_js = r'''
-<script>
-(function(){
-  let livePriceTimer=null, lastLiveTime=0;
-  async function tickLivePrice(){
-    if(!window.activeChartSymbol || !window.activeLineSeries) return;
-    const modal=document.getElementById('modal');
-    if(!modal || modal.style.display!=='flex') return;
+
+old_nifty_start = "async function loadNifty50(){"
+if old_nifty_start in html:
+    start = html.index(old_nifty_start)
+    end_marker = "startChartLiveRefresh();"
+    end = html.index(end_marker, start)
+    old_block = html[start:end]
+    new_block = r"""
+async function loadNifty50(){
+  try{
+    // Scanner already contains the filtered NIFTY 50 universe. Use it first.
+    const sr=await fetch('/api/state?t='+Date.now(),{cache:'no-store'});
+    const sj=await sr.json();
+    const source=(sj.rows||[]).filter(x=>x&&x.symbol);
+    if(source.length){
+      NIFTY50=source.slice(0,50).map(x=>({
+        symbol:String(x.symbol).replace(/^NSE[:_]/i,'').replace(/-EQ$/i,''),
+        price:x.price,
+        change:x.change,
+        weightage:x.weightage,
+        volume:x.volume,
+        turnover:x.turnover
+      }));
+      niftyRender(); niftyMovers();
+      const adv=NIFTY50.filter(x=>x.price!=null&&Number(x.change)>0).length;
+      const dec=NIFTY50.filter(x=>x.price!=null&&Number(x.change)<0).length;
+      const unc=NIFTY50.filter(x=>x.price!=null&&Number(x.change)==0).length;
+      n$('niftyBreadth').innerHTML='<div class="breadth-box"><b class="green">'+adv+'</b><span>ADVANCE</span></div><div class="breadth-box"><b class="red">'+dec+'</b><span>DECLINE</span></div><div class="breadth-box"><b>'+unc+'</b><span>UNCHANGED</span></div>';
+    } else {
+      n$('niftyInfo').textContent='Waiting for NSE scanner data…';
+    }
+
+    // Index quote is optional; never let it block the 50-stock table.
     try{
-      const r=await fetch('/api/live_quote?symbol='+encodeURIComponent(window.activeChartSymbol)+'&t='+Date.now(),{cache:'no-store'});
-      const j=await r.json();
-      if(!j.ok || j.price==null) return;
-      const now=Math.floor(Date.now()/1000);
-      const t=Math.max(now,lastLiveTime+1);
-      lastLiveTime=t;
-      window.activeLineSeries.update({time:t,value:Number(j.price)});
-      const s=document.getElementById('chartStatus');
-      if(s) s.textContent='LIVE LTP ₹'+Number(j.price).toFixed(2)+' • NSE live quote • updating';
-    }catch(e){}
+      const ir=await fetch('/api/nifty50/index?t='+Date.now(),{cache:'no-store'});
+      const ij=await ir.json();
+      if(ij.ok&&ij.data){
+        const d=ij.data,ch=Number(d.changepct??d.change??0);
+        n$('niftyIndex').innerHTML='<span class="nifty-main">NIFTY 50 '+niftyMoney(d.close??d.price)+'</span><span class="nifty-change '+(ch>=0?'green':'red')+'">'+(ch>=0?'+':'')+ch.toFixed(2)+'%</span><span class="nifty-meta">O '+niftyMoney(d.open)+' · H '+niftyMoney(d.high)+' · L '+niftyMoney(d.low)+' · Prev '+niftyMoney(d.previous_close)+'</span>';
+      } else {
+        n$('niftyIndex').innerHTML='<span class="small">NIFTY index quote waiting…</span>';
+      }
+    }catch(e){
+      n$('niftyIndex').innerHTML='<span class="small">NIFTY index reconnecting…</span>';
+    }
+  }catch(e){
+    n$('niftyInfo').textContent=NIFTY50.length?'Live reconnecting • '+NIFTY50.length+' stocks':'Waiting for NSE data…';
   }
-  livePriceTimer=setInterval(tickLivePrice,1000);
-  window.addEventListener('beforeunload',()=>{if(livePriceTimer)clearInterval(livePriceTimer)});
-})();
-</script>
-'''
-# Expose chart globals so the live ticker can update the existing chart.
+}
+n$('niftySearch').addEventListener('input',niftyRender);
+loadNifty50();setInterval(loadNifty50,2000);
+
+"""
+    html = html[:start] + new_block + html[end_marker:]
+
+# Make chart globals available to a live ticker.
 html = html.replace(
     "let activeChartSymbol='', activeChart=null, activeCandleSeries=null, activeVolumeSeries=null, activeLineSeries=null;",
     "let activeChartSymbol='', activeChart=null, activeCandleSeries=null, activeVolumeSeries=null, activeLineSeries=null; window.activeChartSymbol=''; window.activeLineSeries=null;"
@@ -177,17 +208,51 @@ html = html.replace(
     "async function openStock(sym){sym=decodeURIComponent(sym);activeChartSymbol=sym;",
     "async function openStock(sym){sym=decodeURIComponent(sym);activeChartSymbol=sym;window.activeChartSymbol=sym;"
 )
+
+# After the line series is created, expose it.
 html = html.replace(
-    "activeLineSeries=activeChart.addLineSeries({",
-    "activeLineSeries=activeChart.addLineSeries({"
+    "activeLineSeries=activeChart.addLineSeries({
+        lineWidth:2, priceLineVisible:false, lastValueVisible:true
+      });",
+    "activeLineSeries=activeChart.addLineSeries({
+        lineWidth:3, priceLineVisible:false, lastValueVisible:true
+      }); window.activeLineSeries=activeLineSeries;"
 )
-html = html.replace(
-    "      });\n      window.addEventListener('resize',()=>{if(activeChart)",
-    "      }); window.activeLineSeries=activeLineSeries;\n      window.addEventListener('resize',()=>{if(activeChart)"
-)
+
+# Replace the old 5-second chart refresh with a lightweight live quote ticker.
+live_js = r"""
+<script>
+(function(){
+  let liveTimer=null, livePoints=[], lastT=0, lastP=null;
+  function resetLive(){livePoints=[];lastT=0;lastP=null;}
+  async function tick(){
+    if(!window.activeChartSymbol || !window.activeLineSeries) return;
+    const modal=document.getElementById('modal');
+    if(!modal || modal.style.display!=='flex') return;
+    try{
+      const r=await fetch('/api/live_quote?symbol='+encodeURIComponent(window.activeChartSymbol)+'&t='+Date.now(),{cache:'no-store'});
+      const j=await r.json();
+      if(!j.ok || j.price==null) return;
+      const p=Number(j.price);
+      const now=Math.floor(Date.now()/1000);
+      const t=Math.max(now,lastT+1);
+      lastT=t; lastP=p;
+      livePoints.push({time:t,value:p});
+      if(livePoints.length>90) livePoints.shift();
+      // Keep the live trail separate from candles: this gives a smooth,
+      // continuously moving broker-style LTP line without fabricating candles.
+      window.activeLineSeries.setData(livePoints);
+      const s=document.getElementById('chartStatus');
+      if(s) s.textContent='● LIVE LTP ₹'+p.toFixed(2)+' • NSE quote • '+new Date().toLocaleTimeString('en-IN');
+    }catch(e){}
+  }
+  liveTimer=setInterval(tick,1000);
+  document.addEventListener('visibilitychange',()=>{if(document.hidden) resetLive()});
+})();
+</script>
+"""
 html = html.replace("</script></body></html>", live_js + "</script></body></html>")
 server.app_auto.HTML = html
-
 
 def main():
     import threading
