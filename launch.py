@@ -145,10 +145,52 @@ class LiveHandler(enhanced_server.EnhancedHandler):
 # every second.
 html = server.app_auto.HTML
 
-old_nifty_start = "async function loadNifty50(){"
-if old_nifty_start in html:
-    start = html.index(old_nifty_start)
-    end_marker = "startChartLiveRefresh();"
+old_nifty_start = "async function loadNifty50(){
+  try{
+    // One source of truth: the dedicated NIFTY 50 endpoint. It always
+    // returns exactly the 50 configured NIFTY constituents in fixed order.
+    const r=await fetch('/api/nifty50?t='+Date.now(),{cache:'no-store'});
+    const j=await r.json();
+    const source=(j.rows||[]).filter(x=>x&&x.symbol);
+    if(source.length){
+      NIFTY50=source.slice(0,50).map(x=>({
+        symbol:String(x.symbol).replace(/^NSE[:_]/i,'').replace(/-EQ$/i,''),
+        price:x.price,
+        change:x.change,
+        weightage:x.weightage,
+        volume:x.volume,
+        turnover:x.turnover
+      }));
+      niftyRender();
+      // Movers are only a summary; the table below is the single stock list.
+      const adv=Number((j.breadth||{}).advance||0), dec=Number((j.breadth||{}).decline||0), unc=Number((j.breadth||{}).unchanged||0);
+      n$('niftyBreadth').innerHTML='<div class="breadth-box"><b class="green">'+adv+'</b><span>ADVANCE</span></div><div class="breadth-box"><b class="red">'+dec+'</b><span>DECLINE</span></div><div class="breadth-box"><b>'+unc+'</b><span>UNCHANGED</span></div>';
+      n$('niftyInfo').textContent='NIFTY 50 • '+source.filter(x=>x.price!=null).length+'/50 live';
+    } else {
+      n$('niftyInfo').textContent='Waiting for NSE data…';
+    }
+
+    // Index quote is independent; it must never block the 50-stock table.
+    try{
+      const ir=await fetch('/api/nifty50/index?t='+Date.now(),{cache:'no-store'});
+      const ij=await ir.json();
+      if(ij.ok&&ij.data){
+        const d=ij.data,ch=Number(d.changepct??d.change??0);
+        n$('niftyIndex').innerHTML='<span class="nifty-main">NIFTY 50 '+niftyMoney(d.price)+'</span><span class="nifty-change '+(ch>=0?'green':'red')+'">'+(ch>=0?'+':'')+ch.toFixed(2)+'%</span><span class="nifty-meta">O '+niftyMoney(d.open)+' · H '+niftyMoney(d.high)+' · L '+niftyMoney(d.low)+' · Prev '+niftyMoney(d.previous_close)+'</span>';
+      } else {
+        n$('niftyIndex').innerHTML='<span class="small">NIFTY index waiting…</span>';
+      }
+    }catch(e){
+      n$('niftyIndex').innerHTML='<span class="small">NIFTY index reconnecting…</span>';
+    }
+  }catch(e){
+    n$('niftyInfo').textContent=NIFTY50.length?'Reconnecting • '+NIFTY50.length+' stocks':'Waiting for NSE data…';
+  }
+}
+n$('niftySearch').addEventListener('input',niftyRender);
+loadNifty50();setInterval(loadNifty50,5000);
+
+startChartLiveRefresh();"
     end = html.index(end_marker, start)
     old_block = html[start:end]
     new_block = r"""
