@@ -5,7 +5,15 @@ import os
 import re
 import threading
 import server
+import global_impact
 
+
+# Add the live global + India macro layer after the existing market/sector engine.
+_original_enrich_row = server.signal_engine.enrich_row
+def _enrich_with_macro(row, ctx):
+    row = _original_enrich_row(row, ctx)
+    return global_impact.enrich(row, _original_enrich_row)
+server.signal_engine.enrich_row = _enrich_with_macro
 
 def patch_stock_modal():
     html = server.app_auto.HTML
