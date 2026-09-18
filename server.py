@@ -3,6 +3,7 @@ import threading
 import time
 import urllib.parse
 import math
+from datetime import datetime
 import requests
 import app_auto
 import start
@@ -508,11 +509,15 @@ n$('niftySearch').addEventListener('input',niftyRender);loadNifty50();setInterva
 app_auto.HTML = app_auto.HTML.replace('<div class="wrap">', _NIFTY50_PANEL + '<div class="wrap">' + _NIFTY50_SCRIPT)
 
 def _clean_json_value(v):
+    if isinstance(v, (datetime,)):
+        return v.isoformat()
     if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
         return None
     if isinstance(v, dict):
         return {k: _clean_json_value(x) for k, x in v.items()}
     if isinstance(v, list):
+        return [_clean_json_value(x) for x in v]
+    if isinstance(v, tuple):
         return [_clean_json_value(x) for x in v]
     return v
 
