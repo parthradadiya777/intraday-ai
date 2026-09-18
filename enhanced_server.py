@@ -16,10 +16,13 @@ PAPER_LOCK = threading.Lock()
 
 
 def clean(v):
+    if isinstance(v, (datetime,)):
+        return v.isoformat()
     if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
         return None
     if isinstance(v, dict): return {k: clean(x) for k, x in v.items()}
     if isinstance(v, list): return [clean(x) for x in v]
+    if isinstance(v, tuple): return [clean(x) for x in v]
     return v
 
 
