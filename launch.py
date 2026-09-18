@@ -252,6 +252,26 @@ server.app_auto.HTML = html
 
 def main():
     import threading
+    # Expand the scanner universe from the live NSE equity snapshot instead of
+    # limiting it to the NIFTY 50. The scanner still refines only the strongest
+    # candidates, so the full NSE universe can be displayed without running
+    # heavy technical analysis on every symbol.
+    if NSE_DATA_ENABLED:
+        try:
+            universe = server.app_auto.get_snapshot()
+            if universe is not None and len(universe):
+                symbols = []
+                for s in universe['symbol'].tolist():
+                    s = str(s).strip().upper()
+                    if s and s not in symbols:
+                        symbols.append(s)
+                if symbols:
+                    server.NIFTY_SYMBOLS = symbols
+        except Exception:
+            # Keep the existing configured universe if the initial snapshot
+            # is temporarily unavailable.
+            pass
+
     # Do not start NSE polling/scanning while the market-data adapter is paused.
     # This keeps startup fast and avoids repeated network calls.
     if NSE_DATA_ENABLED:
