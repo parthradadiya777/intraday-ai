@@ -126,7 +126,7 @@ def start_background_scan(force=False):
 app_auto.HTML = r'''<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <script src="https://unpkg.com/lightweight-charts@4.2.2/dist/lightweight-charts.standalone.production.js"></script>
-<title>Intraday AI • NIFTY Live v4</title>
+<title>Intraday AI • NIFTY Live v5</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#f4f6f8;color:#172033;font-family:Arial,sans-serif}
 header{background:#101827;color:#fff;padding:22px 28px}h1{margin:0;font-size:28px}.sub{opacity:.72;margin-top:5px}
@@ -155,7 +155,7 @@ tr.stockrow{cursor:pointer}tr.stockrow:hover{background:#f6f9fc}.fit{color:#0783
 @media(max-width:600px){#priceChart{height:300px}.chart-toolbar button{min-width:45px}}
 </style></head>
 <body>
-<header><h1>Intraday AI</h1><div class="sub">NSE intraday AI scanner • multi-stock search • live recommendation • NIFTY Live v4</div>
+<header><h1>Intraday AI</h1><div class="sub">NSE intraday AI scanner • multi-stock search • live recommendation • NIFTY Live v5</div>
 <div class="status"><span class="chip" id="market">MARKET --</span><span class="chip" id="last">Last scan: --</span><span class="chip">AUTO SCAN ON</span></div></header>
 <div class="wrap">
 <div class="panel"><div class="controls"><b>Investment Budget ₹</b><input id="budget" type="number" value="5000" min="0" step="100">
@@ -392,7 +392,8 @@ _NIFTY50_PANEL = '''
 _NIFTY50_SCRIPT = '''<style>.nifty-breadth{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}.breadth-box{background:#f6f8fa;border-radius:10px;padding:9px;text-align:center}.breadth-box b{display:block;font-size:18px}.breadth-box span{font-size:11px;color:#687386}.nifty-movers{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}.mover-box{background:#f8fafc;border:1px solid #e7ebf0;border-radius:10px;padding:10px}.mover-title{font-size:11px;color:#687386;margin-bottom:6px;font-weight:800}.mover-item{display:flex;justify-content:space-between;font-size:12px;padding:3px 0}.nifty-index{display:flex;gap:18px;align-items:center;flex-wrap:wrap;background:#f6f8fa;border-radius:12px;padding:14px;margin-bottom:14px}.nifty-main{font-size:24px;font-weight:900}.nifty-change{font-size:18px;font-weight:800}.nifty-meta{font-size:12px;color:#687386}.nifty-panel{margin:16px 18px 0}.nifty-table{overflow:visible}.nifty-table table{min-width:0}.nifty-table th,.nifty-table td{padding:9px 7px}@media(max-width:600px){.nifty-panel{margin:10px}.nifty-movers{grid-template-columns:1fr}.nifty-table table{display:block}.nifty-table thead{display:none}.nifty-table tbody{display:grid;grid-template-columns:1fr 1fr;gap:8px}.nifty-table tr{display:grid;grid-template-columns:1fr auto;gap:2px 8px;border:1px solid #e5e9ef;border-radius:10px;padding:9px;background:#fff}.nifty-table td{border:0;padding:2px 0;white-space:normal}.nifty-table td:nth-child(1){font-size:14px}.nifty-table td:nth-child(2){text-align:right}.nifty-table td:nth-child(3){text-align:right}.nifty-table td:nth-child(4),.nifty-table td:nth-child(5),.nifty-table td:nth-child(6){font-size:11px;color:#687386}.nifty-table td:nth-child(4)::before{content:'Wt ';}.nifty-table td:nth-child(5)::before{content:'Vol ';}.nifty-table td:nth-child(6)::before{content:'Turn ';}}@media(max-width:420px){.nifty-table tbody{grid-template-columns:1fr}}</style><script>
 let NIFTY50=[];const n$=id=>document.getElementById(id);function niftyMoney(x){return x==null?'—':'₹'+Number(x).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});}
 function niftyRender(){
- const q=(n$('niftySearch').value||'').trim().toUpperCase();
+ const rawQ=(n$('niftySearch').value||'').trim().toUpperCase();
+ const q=(rawQ==='NIFTY50'||rawQ==='NIFTY 50')?'':rawQ;
  const rows=NIFTY50.filter(x=>!q||x.symbol.toUpperCase().includes(q));
  n$('niftyInfo').textContent='Showing '+rows.length+' of '+NIFTY50.length+' NIFTY 50 stocks';
  n$('niftyRows').innerHTML=rows.map(x=>{const ch=x.change==null?null:Number(x.change);const cls=ch!=null?(ch>=0?'green':'red'):'';return '<tr><td><b>'+x.symbol+'</b></td><td>'+niftyMoney(x.price)+'</td><td class="'+cls+'">'+(ch==null?'—':(ch>=0?'+':'')+ch.toFixed(2)+'%')+'</td><td>'+(x.weightage==null?'—':Number(x.weightage).toFixed(2)+'%')+'</td><td>'+(x.volume==null?'—':Number(x.volume).toLocaleString('en-IN'))+'</td><td>'+(x.turnover==null?'—':Number(x.turnover).toLocaleString('en-IN'))+'</td></tr>';}).join('')||'<tr><td colspan="6" class="empty">No matching NIFTY 50 stock.</td></tr>';
