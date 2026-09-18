@@ -1106,23 +1106,45 @@ class FastHandler(app_auto.Handler):
             # current scanner row. Technical refinement may use the latest
             # completed 5-minute candle, which can otherwise differ from the
             # live snapshot shown in the stock list.
+            # The stock card and modal must use ONE canonical decision.
+            # Technical indicators may be refreshed for display, but the modal
+            # must never silently recalculate score/signal and disagree with
+            # the stock list that the user clicked.
             data=dict(row);refined=False
             live_price=row.get('price')
             live_change=row.get('change')
             live_volume=row.get('volume')
+            decision_fields={
+                'score','signal','ai_confidence','ai_model','target','sl',
+                'ai_reason','confirmations','market_confirmed','sector_confirmed',
+                'market_trend','sector','global_impact','global_score',
+                'india_impact','macro_risk','macro_direction','macro_drivers',
+                'global_confirmed'
+            }
+            indicator_fields={
+                'rsi','ema9','ema21','vwap','macd','macd_signal','adx',
+                'relative_volume','atr','momentum'
+            }
             try:
                 tech=start.technical(symbol)
                 if tech:
-                    data.update(tech)
+                    for k in indicator_fields:
+                        if k in tech and tech.get(k) is not None:
+                            data[k]=tech[k]
+                    # Explicitly restore the scanner's canonical decision fields.
+                    for k in decision_fields:
+                        if k in row:
+                            data[k]=row[k]
                     refined=True
-                    if live_price is not None:
-                        data['price']=live_price
-                    if live_change is not None:
-                        data['change']=live_change
-                    if live_volume is not None:
-                        data['volume']=live_volume
             except Exception:
                 pass
+            # Always keep the same live quote shown in the clicked stock row.
+            if live_price is not None:
+                data['price']=live_price
+            if live_change is not None:
+                data['change']=live_change
+            if live_volume is not None:
+                data['volume']=live_volume
             self.send_json({'ok':True,'data':data,'refined':refined});return
 
         if path == '/api/nifty50':
