@@ -370,7 +370,7 @@ async function loadOptions(){
     if(!j.ok)throw Error(j.error||'Options unavailable');
     $('optionsStatus').textContent='Expiry '+(j.expiry||'—')+' • ATM '+j.atm+' • NSE option chain';
     const pcr=j.pcr==null?'—':Number(j.pcr).toFixed(2);
-    $('optionsSummary').innerHTML='<span class="opt-chip">Spot <b>'+money(j.spot)+'</b></span><span class="opt-chip">ATM <b>'+j.atm+'</b></span><span class="opt-chip">PCR <b>'+pcr+'</b></span><span class="opt-chip">Option data feeds prediction</span>';
+    $('optionsSummary').innerHTML='<span class="opt-chip">Spot <b>'+money(j.spot)+'</b></span><span class="opt-chip">ATM <b>'+j.atm+'</b></span><span class="opt-chip">PCR <b>'+pcr+'</b></span><span class="opt-chip">CHAIN <b>'+val(j.chain_direction)+'</b></span><span class="opt-chip">PRESSURE <b>'+val(j.chain_pressure)+'</b></span><span class="opt-chip">CALL OI Δ <b>'+val(j.call_oi_change)+'</b></span><span class="opt-chip">PUT OI Δ <b>'+val(j.put_oi_change)+'</b></span>';
     if(j.option_pick){
       const p=j.option_pick;
       const sideClass=p.side==='CALL'?'callcell':'putcell';
@@ -793,7 +793,7 @@ def _nse_option_chain(symbol):
                 ivs = [z['iv'] for z in pool if z['iv'] > 0]
                 med_iv = sorted(ivs)[len(ivs)//2] if ivs else 0.0
                 def pick_score(z):
-                    liq = 0.35*(z['oi']/max_oi) + 0.20*(z['vol']/max_vol)
+                    liq = 0.30*(z['oi']/max_oi) + 0.15*(z['vol']/max_vol)
                     dist = 0.20*(1.0 - z['dist']/max_dist) if max_dist else 0.20
                     spread_score = 0.15*max(0.0, min(1.0, 1.0-z['spread']/0.10))
                     delta = abs(float((z.get('greeks') or {}).get('delta') or 0))
