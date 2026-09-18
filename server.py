@@ -408,6 +408,28 @@ def refresh_nifty_cache():
                                 'turnover': r.get('traded_value')
                             }
 
+            # Last-resort direct quote fan-out. This keeps the NIFTY panel
+            # populated even when the bulk constituent endpoint is unavailable.
+            if len(rows_by_symbol) < 25:
+                try:
+                    from concurrent.futures import ThreadPoolExecutor, as_completed
+                    def one_quote(sym):
+                        try:
+                            q=live.get_stock_live_quotes(sym)
+                            if not q: return None
+                            return sym, {'symbol':sym,'price':q.get('close'),'change':q.get('changepct'),
+                                         'weightage':None,'volume':q.get('volume'),'turnover':q.get('traded_value')}
+                        except Exception:
+                            return None
+                    with ThreadPoolExecutor(max_workers=8) as ex:
+                        futures=[ex.submit(one_quote,s) for s in NIFTY_SYMBOLS if s not in rows_by_symbol]
+                        for f in as_completed(futures):
+                            item=f.result()
+                            if item and item[1].get('price') is not None:
+                                rows_by_symbol[item[0]]=item[1]
+                except Exception:
+                    pass
+
             rows = [rows_by_symbol.get(s, {
                 'symbol': s, 'price': None, 'change': None,
                 'weightage': None, 'volume': None, 'turnover': None
