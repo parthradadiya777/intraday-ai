@@ -700,6 +700,78 @@ def _nse_option_chain(symbol):
         put_oi = sum(float(x['put'].get('oi') or 0) for x in selected)
         pcr = (put_oi / call_oi) if call_oi else None
 
+        # Contract recommendation for a directional stock signal.
+        # We only issue a CALL/PUT pick when the underlying scanner itself is
+        # BUY or SELL. WAIT stocks remain informational only.
+        signal = None
+        try:
+            state_rows = app_auto.STATE.get('rows', []) or []
+            sr = next((r for r in state_rows if str(r.get('symbol','')).upper() == api_symbol), None)
+            signal = str((sr or {}).get('signal') or '').upper()
+        except Exception:
+            signal = None
+
+        option_pick = None
+        if signal in ('BUY', 'SELL') and spot is not None:
+            side = 'CALL' if signal == 'BUY' else 'PUT'
+            leg_key = 'call' if side == 'CALL' else 'put'
+            candidates = []
+            for x in data:
+                leg = x.get(leg_key) or {}
+                ltp = float(leg.get('ltp') or 0)
+                oi = float(leg.get('oi') or 0)
+                vol = float(leg.get('volume') or 0)
+                if ltp <= 0 or oi <= 0 or vol <= 0:
+                    continue
+                strike = float(x['strike'])
+                # Prefer ATM/slightly ITM contracts for directional intraday
+                # exposure rather than far OTM lottery-style contracts.
+                itm_or_atm = (strike <= float(spot)) if side == 'CALL' else (strike >= float(spot))
+                moneyness_penalty = abs(strike / float(spot) - 1.0)
+                bid = float(leg.get('bid') or 0)
+                ask = float(leg.get('ask') or 0)
+                spread = ((ask-bid)/ltp) if bid > 0 and ask >= bid and ltp > 0 else 0.12
+                iv = float(leg.get('iv') or 0)
+                candidates.append({
+                    'x':x,'leg':leg,'strike':strike,'ltp':ltp,'oi':oi,'vol':vol,
+                    'itm_or_atm':itm_or_atm,'dist':moneyness_penalty,
+                    'spread':spread,'iv':iv
+                })
+            if candidates:
+                # Hard preference: ATM/ITM first. Within that group, balance
+                # distance to spot, liquidity, and bid/ask quality.
+                preferred = [z for z in candidates if z['itm_or_atm']]
+                pool = preferred if preferred else candidates
+                max_oi = max(z['oi'] for z in pool) or 1.0
+                max_vol = max(z['vol'] for z in pool) or 1.0
+                max_dist = max(z['dist'] for z in pool) or 1.0
+                def pick_score(z):
+                    liq = 0.45*(z['oi']/max_oi) + 0.30*(z['vol']/max_vol)
+                    dist = 0.20*(1.0 - z['dist']/max_dist) if max_dist else 0.20
+                    spread_score = 0.05*max(0.0, min(1.0, 1.0-z['spread']/0.10))
+                    return 100*(liq + dist + spread_score)
+                for z in pool:
+                    z['score'] = pick_score(z)
+                chosen = max(pool, key=lambda z: z['score'])
+                confidence = min(95.0, max(50.0, chosen['score']))
+                option_pick = {
+                    'side': side,
+                    'option_type': 'CE' if side == 'CALL' else 'PE',
+                    'strike': chosen['x']['strike'],
+                    'ltp': chosen['ltp'],
+                    'oi': chosen['oi'],
+                    'oi_change': chosen['leg'].get('oi_change'),
+                    'volume': chosen['vol'],
+                    'iv': chosen['iv'],
+                    'bid': chosen['leg'].get('bid'),
+                    'ask': chosen['leg'].get('ask'),
+                    'score': round(chosen['score'],1),
+                    'confidence': round(confidence,1),
+                    'reason': ('BUY signal → nearest liquid ATM/ITM CALL selected'
+                               if side == 'CALL' else
+                               'SELL signal → nearest liquid ATM/ITM PUT selected')
+                }
+
         return _clean_json_value({
             'ok':True,
             'symbol':api_symbol,
@@ -708,6 +780,8 @@ def _nse_option_chain(symbol):
             'atm':atm['strike'],
             'pcr':pcr,
             'rows':selected,
+            'option_pick':option_pick,
+            'underlying_signal':signal,
             'source':'NSE option chain v3'
         })
     except Exception as e:
