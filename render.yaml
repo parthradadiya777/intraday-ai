@@ -3,6 +3,6 @@ services:
     name: intraday-ai
     runtime: python
     plan: free
-    buildCommand: "python -m py_compile app_auto.py start.py server.py ai_engine.py"
-    startCommand: "python enhanced_server.py"
+    buildCommand: "python -m py_compile app_auto.py start.py server.py ai_engine.py enhanced_server.py launch.py"
+    startCommand: "python launch.py"
     healthCheckPath: "/health"
