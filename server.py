@@ -276,7 +276,7 @@ startChartLiveRefresh();
 
 
 # NIFTY 50 background cache: never block browser requests on NSE.
-NIFTY_CACHE = {'rows': [], 'index': {}, 'error': '', 'ts': 0}
+NIFTY_CACHE = {'rows': [], 'index': {}, 'breadth': {'advance': 0, 'decline': 0, 'unchanged': 0}, 'error': '', 'ts': 0}
 NIFTY_LOCK = threading.Lock()
 NIFTY_SYMBOLS = [
     'ADANIENT','ADANIPORTS','APOLLOHOSP','ASIANPAINT','AXISBANK','BAJAJ-AUTO',
@@ -293,7 +293,17 @@ NIFTY_CACHE['error'] = 'Live NIFTY 50 quotes are not published yet; showing all 
 def refresh_nifty_cache():
     while True:
         try:
-            df = live.get_index_constituents_live_snapshot('NIFTY 50')
+            df = None
+            try:
+                # Use the same snapshot that powers the main scanner first.
+                df = app_auto.get_snapshot()
+            except Exception:
+                pass
+            if df is None or len(df) == 0:
+                try:
+                    df = live.get_index_constituents_live_snapshot('NIFTY 50')
+                except Exception:
+                    df = None
             rows_by_symbol = {}
             if df is not None and len(df):
                 for _, r in df.iterrows():
@@ -304,9 +314,12 @@ def refresh_nifty_cache():
                             'weightage':r.get('weightage'),'volume':r.get('volume'),
                             'turnover':r.get('turnover')
                         }
-            # Fill missing constituents from the complete NSE EQ snapshot.
-            if len(rows_by_symbol) < 50:
-                eq = live.get_all_securities_live_snapshot(series='EQ')
+            # Enrich missing NIFTY fields from the dedicated endpoint, but never
+            # make the browser wait for this slower request.
+            try:
+                eq = live.get_index_constituents_live_snapshot('NIFTY 50')
+            except Exception:
+                eq = None
                 if eq is not None and len(eq):
                     for _, r in eq.iterrows():
                         sym=str(r.get('symbol','')).strip()
@@ -324,24 +337,59 @@ def refresh_nifty_cache():
                     rows.append(rows_by_symbol[s])
                 else:
                     rows.append({'symbol':s,'price':None,'change':None,'weightage':None,'volume':None,'turnover':None})
-            idx=live.get_index_live_price('NIFTY 50') or {}
+            try:
+                idx=live.get_index_live_price('NIFTY 50') or {}
+            except Exception:
+                idx={}
+            valid=[r for r in rows if r.get('price') is not None]
+            breadth={
+                'advance':sum(1 for r in valid if float(r.get('change') or 0)>0),
+                'decline':sum(1 for r in valid if float(r.get('change') or 0)<0),
+                'unchanged':sum(1 for r in valid if float(r.get('change') or 0)==0)
+            }
             with NIFTY_LOCK:
-                missing=sum(1 for r in rows if r.get('price') is None)
-                NIFTY_CACHE.update({'rows':rows[:50],'index':idx,'error':('Live quote missing for '+str(missing)+' NIFTY 50 stock(s)') if missing else '','ts':time.time()})
+                NIFTY_CACHE.update({'rows':rows[:50],'index':idx,'breadth':breadth,'error':'' if valid else 'Waiting for NSE snapshot','ts':time.time()})
         except Exception as e:
             with NIFTY_LOCK:
                 NIFTY_CACHE['error']=str(e)[:180]
-        time.sleep(15)
+        time.sleep(5)
 
 # NIFTY50 UI injection
 _NIFTY50_PANEL = '''
-<div class="panel nifty-panel"><h2>🇮🇳 NIFTY 50</h2><div id="niftyIndex" class="nifty-index">Loading NIFTY 50…</div><div class="searchrow"><input id="niftySearch" class="search" placeholder="🔍 Search NIFTY 50 stock"><span id="niftyInfo" class="searchinfo"></span></div><div class="tablewrap nifty-table"><table><thead><tr><th>Stock</th><th>Price</th><th>Change</th><th>Weight</th><th>Volume</th><th>Turnover</th></tr></thead><tbody id="niftyRows"><tr><td colspan="6" class="empty"><span class="spinner"></span> Preparing NIFTY 50…</td></tr></tbody></table></div></div>
+<div class="panel nifty-panel"><h2>🇮🇳 NIFTY 50</h2><div id="niftyIndex" class="nifty-index"><span class="spinner"></span> Preparing live index…</div><div id="niftyBreadth" class="nifty-breadth"><div class="breadth-box"><b>—</b><span>ADVANCE</span></div><div class="breadth-box"><b>—</b><span>DECLINE</span></div><div class="breadth-box"><b>—</b><span>UNCHANGED</span></div></div><div id="niftyMovers" class="nifty-movers"></div><div class="searchrow"><input id="niftySearch" class="search" placeholder="🔍 Search NIFTY 50 stock"><span id="niftyInfo" class="searchinfo"></span></div><div class="tablewrap nifty-table"><table><thead><tr><th>Stock</th><th>Price</th><th>Change</th><th>Weight</th><th>Volume</th><th>Turnover</th></tr></thead><tbody id="niftyRows"><tr><td colspan="6" class="empty"><span class="spinner"></span> Preparing NIFTY 50…</td></tr></tbody></table></div></div>
 '''
-_NIFTY50_SCRIPT = '''<style>.nifty-index{display:flex;gap:18px;align-items:center;flex-wrap:wrap;background:#f6f8fa;border-radius:12px;padding:14px;margin-bottom:14px}.nifty-main{font-size:24px;font-weight:900}.nifty-change{font-size:18px;font-weight:800}.nifty-meta{font-size:12px;color:#687386}.nifty-panel{margin:16px 18px 0}.nifty-table{overflow:visible}.nifty-table table{min-width:0}.nifty-table th,.nifty-table td{padding:9px 7px}@media(max-width:600px){.nifty-panel{margin:10px}.nifty-table table{display:block}.nifty-table thead{display:none}.nifty-table tbody{display:grid;grid-template-columns:1fr 1fr;gap:8px}.nifty-table tr{display:grid;grid-template-columns:1fr auto;gap:2px 8px;border:1px solid #e5e9ef;border-radius:10px;padding:9px;background:#fff}.nifty-table td{border:0;padding:2px 0;white-space:normal}.nifty-table td:nth-child(1){font-size:14px}.nifty-table td:nth-child(2){text-align:right}.nifty-table td:nth-child(3){text-align:right}.nifty-table td:nth-child(4),.nifty-table td:nth-child(5),.nifty-table td:nth-child(6){font-size:11px;color:#687386}.nifty-table td:nth-child(4)::before{content:'Wt ';}.nifty-table td:nth-child(5)::before{content:'Vol ';}.nifty-table td:nth-child(6)::before{content:'Turn ';}}@media(max-width:420px){.nifty-table tbody{grid-template-columns:1fr}}</style><script>
+_NIFTY50_SCRIPT = '''<style>.nifty-breadth{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}.breadth-box{background:#f6f8fa;border-radius:10px;padding:9px;text-align:center}.breadth-box b{display:block;font-size:18px}.breadth-box span{font-size:11px;color:#687386}.nifty-movers{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}.mover-box{background:#f8fafc;border:1px solid #e7ebf0;border-radius:10px;padding:10px}.mover-title{font-size:11px;color:#687386;margin-bottom:6px;font-weight:800}.mover-item{display:flex;justify-content:space-between;font-size:12px;padding:3px 0}.nifty-index{display:flex;gap:18px;align-items:center;flex-wrap:wrap;background:#f6f8fa;border-radius:12px;padding:14px;margin-bottom:14px}.nifty-main{font-size:24px;font-weight:900}.nifty-change{font-size:18px;font-weight:800}.nifty-meta{font-size:12px;color:#687386}.nifty-panel{margin:16px 18px 0}.nifty-table{overflow:visible}.nifty-table table{min-width:0}.nifty-table th,.nifty-table td{padding:9px 7px}@media(max-width:600px){.nifty-panel{margin:10px}.nifty-movers{grid-template-columns:1fr}.nifty-table table{display:block}.nifty-table thead{display:none}.nifty-table tbody{display:grid;grid-template-columns:1fr 1fr;gap:8px}.nifty-table tr{display:grid;grid-template-columns:1fr auto;gap:2px 8px;border:1px solid #e5e9ef;border-radius:10px;padding:9px;background:#fff}.nifty-table td{border:0;padding:2px 0;white-space:normal}.nifty-table td:nth-child(1){font-size:14px}.nifty-table td:nth-child(2){text-align:right}.nifty-table td:nth-child(3){text-align:right}.nifty-table td:nth-child(4),.nifty-table td:nth-child(5),.nifty-table td:nth-child(6){font-size:11px;color:#687386}.nifty-table td:nth-child(4)::before{content:'Wt ';}.nifty-table td:nth-child(5)::before{content:'Vol ';}.nifty-table td:nth-child(6)::before{content:'Turn ';}}@media(max-width:420px){.nifty-table tbody{grid-template-columns:1fr}}</style><script>
 let NIFTY50=[];const n$=id=>document.getElementById(id);function niftyMoney(x){return x==null?'—':'₹'+Number(x).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});}
-function niftyRender(){const q=(n$('niftySearch').value||'').trim().toUpperCase();const rows=NIFTY50.filter(x=>!q||x.symbol.toUpperCase().includes(q));n$('niftyInfo').textContent='Showing '+rows.length+' of '+NIFTY50.length+' NIFTY 50 stocks';n$('niftyRows').innerHTML=rows.map(x=>{const ch=x.change==null?null:Number(x.change);const cls=ch!=null?(ch>=0?'green':'red'):'';return '<tr><td><b>'+x.symbol+'</b></td><td>'+niftyMoney(x.price)+'</td><td class="'+cls+'">'+(ch==null?'—':ch.toFixed(2)+'%')+'</td><td>'+(x.weightage==null?'—':Number(x.weightage).toFixed(2)+'%')+'</td><td>'+(x.volume==null?'—':Number(x.volume).toLocaleString('en-IN'))+'</td><td>'+(x.turnover==null?'—':Number(x.turnover).toLocaleString('en-IN'))+'</td></tr>';}).join('')||'<tr><td colspan="6" class="empty">No matching NIFTY 50 stock.</td></tr>';}
-async function loadNifty50(){try{const [ir,cr]=await Promise.all([fetch('/api/nifty50/index'),fetch('/api/nifty50')]);const ij=await ir.json(),cj=await cr.json();if(ij.ok){const d=ij.data,ch=Number(d.changepct||d.change||0);n$('niftyIndex').innerHTML='<span class="nifty-main">NIFTY 50 '+niftyMoney(d.close)+'</span><span class="nifty-change '+(ch>=0?'green':'red')+'">'+(ch>=0?'+':'')+ch.toFixed(2)+'%</span><span class="nifty-meta">O '+niftyMoney(d.open)+' · H '+niftyMoney(d.high)+' · L '+niftyMoney(d.low)+' · Prev '+niftyMoney(d.previous_close)+'</span>';}if(cj.ok){NIFTY50=cj.rows||[];niftyRender();}else {NIFTY50=[];n$('niftyInfo').textContent='Updating live market data…';n$('niftyRows').innerHTML='<tr><td colspan="6" class="empty"><span class="spinner"></span> Updating NIFTY 50…</td></tr>';}}catch(e){n$('niftyIndex').innerHTML='<span class="small"><span class="spinner"></span> Connecting to NSE market data…</span>';}}
-n$('niftySearch').addEventListener('input',niftyRender);loadNifty50();setInterval(loadNifty50,15000);</script>'''
+function niftyRender(){
+ const q=(n$('niftySearch').value||'').trim().toUpperCase();
+ const rows=NIFTY50.filter(x=>!q||x.symbol.toUpperCase().includes(q));
+ n$('niftyInfo').textContent='Showing '+rows.length+' of '+NIFTY50.length+' NIFTY 50 stocks';
+ n$('niftyRows').innerHTML=rows.map(x=>{const ch=x.change==null?null:Number(x.change);const cls=ch!=null?(ch>=0?'green':'red'):'';return '<tr><td><b>'+x.symbol+'</b></td><td>'+niftyMoney(x.price)+'</td><td class="'+cls+'">'+(ch==null?'—':(ch>=0?'+':'')+ch.toFixed(2)+'%')+'</td><td>'+(x.weightage==null?'—':Number(x.weightage).toFixed(2)+'%')+'</td><td>'+(x.volume==null?'—':Number(x.volume).toLocaleString('en-IN'))+'</td><td>'+(x.turnover==null?'—':Number(x.turnover).toLocaleString('en-IN'))+'</td></tr>';}).join('')||'<tr><td colspan="6" class="empty">No matching NIFTY 50 stock.</td></tr>';
+}
+function niftyMovers(){
+ const v=NIFTY50.filter(x=>x.price!=null&&x.change!=null);
+ const g=v.slice().sort((a,b)=>Number(b.change)-Number(a.change)).slice(0,5);
+ const l=v.slice().sort((a,b)=>Number(a.change)-Number(b.change)).slice(0,5);
+ n$('niftyMovers').innerHTML='<div class="mover-box"><div class="mover-title">TOP GAINERS</div>'+g.map(x=>'<div class="mover-item"><b>'+x.symbol+'</b><span class="green">+'+Number(x.change).toFixed(2)+'%</span></div>').join('')+'</div><div class="mover-box"><div class="mover-title">TOP LOSERS</div>'+l.map(x=>'<div class="mover-item"><b>'+x.symbol+'</b><span class="red">'+Number(x.change).toFixed(2)+'%</span></div>').join('')+'</div>';
+}
+async function loadNifty50(){
+ try{
+  const [ir,cr]=await Promise.all([fetch('/api/nifty50/index?t='+Date.now(),{cache:'no-store'}),fetch('/api/nifty50?t='+Date.now(),{cache:'no-store'})]);
+  const ij=await ir.json(),cj=await cr.json();
+  if(cj.rows&&cj.rows.length){NIFTY50=cj.rows.slice(0,50);niftyRender();niftyMovers();}
+  const b=cj.breadth||ij.breadth||{};
+  n$('niftyBreadth').innerHTML='<div class="breadth-box"><b class="green">'+(b.advance||0)+'</b><span>ADVANCE</span></div><div class="breadth-box"><b class="red">'+(b.decline||0)+'</b><span>DECLINE</span></div><div class="breadth-box"><b>'+(b.unchanged||0)+'</b><span>UNCHANGED</span></div>';
+  if(ij.ok&&ij.data){
+   const d=ij.data,ch=Number(d.changepct??d.change??0);
+   n$('niftyIndex').innerHTML='<span class="nifty-main">NIFTY 50 '+niftyMoney(d.close??d.price)+'</span><span class="nifty-change '+(ch>=0?'green':'red')+'">'+(ch>=0?'+':'')+ch.toFixed(2)+'%</span><span class="nifty-meta">O '+niftyMoney(d.open)+' · H '+niftyMoney(d.high)+' · L '+niftyMoney(d.low)+' · Prev '+niftyMoney(d.previous_close)+'</span>';
+  }else{
+   n$('niftyIndex').innerHTML='<span class="small"><span class="spinner"></span> Waiting for live NIFTY index…</span>';
+  }
+ }catch(e){
+  n$('niftyInfo').textContent=NIFTY50.length?'Live reconnecting • '+NIFTY50.length+' cached stocks':'Waiting for NSE snapshot…';
+ }
+}
+n$('niftySearch').addEventListener('input',niftyRender);loadNifty50();setInterval(loadNifty50,5000);</script>'''
 app_auto.HTML = app_auto.HTML.replace('<div class="wrap">', _NIFTY50_PANEL + '<div class="wrap">' + _NIFTY50_SCRIPT)
 
 class FastHandler(app_auto.Handler):
@@ -510,12 +558,12 @@ class NiftyHandler(FastHandler):
         path, _, query = self.path.partition('?')
         if path == '/api/nifty50':
             with NIFTY_LOCK:
-                payload={'ok':bool(NIFTY_CACHE['rows']),'rows':list(NIFTY_CACHE['rows']),'count':len(NIFTY_CACHE['rows']),'error':NIFTY_CACHE['error'],'ts':NIFTY_CACHE['ts']}
-            self.send_json(payload, 200 if payload['ok'] else 503); return
+                payload={'ok':bool(NIFTY_CACHE['rows']),'rows':list(NIFTY_CACHE['rows']),'count':len(NIFTY_CACHE['rows']),'breadth':dict(NIFTY_CACHE.get('breadth',{})),'error':NIFTY_CACHE['error'],'ts':NIFTY_CACHE['ts']}
+            self.send_json(payload, 200); return
         if path == '/api/nifty50/index':
             with NIFTY_LOCK:
                 q=dict(NIFTY_CACHE['index'])
-            self.send_json({'ok':bool(q),'data':q,'error':None if q else 'NIFTY 50 index data loading'}, 200 if q else 503); return
+            self.send_json({'ok':bool(q),'data':q,'breadth':dict(NIFTY_CACHE.get('breadth',{})),'error':None if q else 'NIFTY index quote loading'}, 200); return
         return super().do_GET()
 
 if __name__=='__main__':
