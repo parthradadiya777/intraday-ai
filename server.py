@@ -295,7 +295,10 @@ def refresh_nifty_cache():
         try:
             rows_by_symbol = {}
 
-            # Fastest source: the main scanner already has a fresh NSE snapshot.
+            # FIRST: use the main scanner's already-fresh NSE snapshot.
+            # This must be published to the NIFTY cache BEFORE any slower
+            # dedicated NIFTY/index request, otherwise the whole NIFTY panel
+            # stays empty while that request is waiting.
             try:
                 current = app_auto.STATE.get('rows', []) or []
                 for r in current:
@@ -312,7 +315,8 @@ def refresh_nifty_cache():
             except Exception:
                 pass
 
-            # If scanner rows are not ready, ask the NSE snapshot in the background.
+            # If the scanner has not produced rows yet, fetch the normal NSE
+            # equity snapshot as a background fallback.
             if len(rows_by_symbol) < 10:
                 try:
                     df = app_auto.get_snapshot()
@@ -331,38 +335,10 @@ def refresh_nifty_cache():
                                 'turnover': r.get('traded_value')
                             }
 
-            # Optional enrichment. Failure/timeout never blocks the dashboard.
-            try:
-                df = live.get_index_constituents_live_snapshot('NIFTY 50')
-                if df is not None and len(df):
-                    for _, r in df.iterrows():
-                        sym = str(r.get('symbol','')).strip().upper()
-                        if sym in NIFTY_SYMBOLS:
-                            price = r.get('ltp')
-                            if price is None:
-                                price = r.get('close')
-                            if price is not None or sym not in rows_by_symbol:
-                                rows_by_symbol[sym] = {
-                                    'symbol': sym,
-                                    'price': price,
-                                    'change': r.get('changepct'),
-                                    'weightage': r.get('weightage'),
-                                    'volume': r.get('volume'),
-                                    'turnover': r.get('turnover', r.get('traded_value'))
-                                }
-            except Exception:
-                pass
-
             rows = [rows_by_symbol.get(s, {
                 'symbol': s, 'price': None, 'change': None,
                 'weightage': None, 'volume': None, 'turnover': None
             }) for s in NIFTY_SYMBOLS]
-
-            # Index quote is isolated; a slow index request cannot hide the stocks.
-            try:
-                idx = live.get_index_live_price('NIFTY 50') or {}
-            except Exception:
-                idx = {}
 
             valid = [r for r in rows if r.get('price') is not None]
             breadth = {
@@ -371,14 +347,27 @@ def refresh_nifty_cache():
                 'unchanged': sum(1 for r in valid if float(r.get('change') or 0) == 0)
             }
 
+            # Publish stock rows immediately. Slow index/NIFTY enrichment must
+            # never prevent the 50 stocks from appearing in the browser.
             with NIFTY_LOCK:
                 NIFTY_CACHE.update({
                     'rows': rows[:50],
-                    'index': idx,
                     'breadth': breadth,
                     'error': '' if valid else 'Waiting for NSE snapshot',
                     'ts': time.time()
                 })
+
+            # Index quote is optional enrichment. Even if this call is slow,
+            # the stock table above has already been published.
+            try:
+                idx = live.get_index_live_price('NIFTY 50') or {}
+                if idx:
+                    with NIFTY_LOCK:
+                        NIFTY_CACHE['index'] = idx
+                        NIFTY_CACHE['ts'] = time.time()
+            except Exception:
+                pass
+
         except Exception as e:
             with NIFTY_LOCK:
                 NIFTY_CACHE['error'] = str(e)[:180]
