@@ -42,7 +42,7 @@ def snapshot_ai(row, max_volume):
     }
 
 def scan():
-    if app_auto.STATE.get('rows') and time.time() - app_auto.STATE.get('ts', 0) < 15:
+    if app_auto.STATE.get('rows') and time.time() - app_auto.STATE.get('ts', 0) < 5:
         return app_auto.STATE.get('rows', [])
     with app_auto.STATE['lock']:
         if app_auto.STATE.get('scanning'):
@@ -140,7 +140,7 @@ app_auto.scan = scan
 def start_background_scan(force=False):
     if app_auto.STATE.get('scanning'):
         return False
-    if not force and app_auto.STATE.get('rows') and time.time() - app_auto.STATE.get('ts', 0) < 20:
+    if not force and app_auto.STATE.get('rows') and time.time() - app_auto.STATE.get('ts', 0) < 5:
         return False
     threading.Thread(target=scan, daemon=True).start()
     return True
@@ -244,7 +244,7 @@ async function scanNow(){if(window.scanning)return;window.scanning=true;$('msg')
 async function openStock(sym){sym=decodeURIComponent(sym);activeChartSymbol=sym;$('modal').style.display='flex';$('dtitle').textContent=sym;$('dsub').textContent='Loading latest stock data…';$('details').innerHTML='<div class="empty">Fetching…</div>';loadChart('5');loadOptions();try{let r=await fetch('/api/stock?symbol='+encodeURIComponent(sym));let j=await r.json();if(!j.ok)throw Error(j.error||'Failed');let x=j.data;$('dsub').textContent='NSE • '+(j.refined?'5-minute AI refined':'snapshot data');let items=[['Price',money(x.price)],['Change',val(x.change)+'%'],['AI Score',val(x.score)],['Signal',val(x.signal)],['Confidence',val(x.ai_confidence)+'%'],['Model',val(x.ai_model)],['RSI',val(x.rsi)],['EMA 9',money(x.ema9)],['EMA 21',money(x.ema21)],['VWAP',money(x.vwap)],['MACD',val(x.macd)],['MACD Signal',val(x.macd_signal)],['ADX',val(x.adx)],['Relative Volume',val(x.relative_volume)+'x'],['ATR',money(x.atr)],['Momentum',val(x.momentum)+'%'],['Volume',Number(x.volume||0).toLocaleString('en-IN')],['Target',money(x.target)],['Stop Loss',money(x.sl)]];$('details').innerHTML=items.map(a=>'<div class="detail"><b>'+a[0]+'</b><span>'+a[1]+'</span></div>').join('');$('dreason').textContent=x.ai_reason||'No additional AI explanation available.'}catch(e){$('details').innerHTML='<div class="empty">'+e.message+'</div>';$('dsub').textContent='Unable to load stock details'}}
 function closeModal(){$('modal').style.display='none';if(chartRefreshTimer){clearInterval(chartRefreshTimer);chartRefreshTimer=null}if(activeChart){try{activeChart.remove()}catch(e){}activeChart=null;activeCandleSeries=null;activeVolumeSeries=null;activeLineSeries=null;liveLinePoints=[]}}
 $('budget').addEventListener('input',()=>render());$('search').addEventListener('input',()=>{lastQuery=$('search').value;render()});
-state();setInterval(state,1500);
+state();setInterval(state,1000);
 
 let activeChartSymbol='', activeChart=null, activeCandleSeries=null, activeVolumeSeries=null, activeLineSeries=null;
 let liveLinePoints=[];
