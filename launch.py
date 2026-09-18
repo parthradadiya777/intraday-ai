@@ -212,7 +212,7 @@ html = html.replace(
 # After the line series is created, expose it.
 html = html.replace(
     "activeLineSeries=activeChart.addLineSeries({
-        lineWidth:2, priceLineVisible:false, lastValueVisible:true
+        lineWidth:3, priceLineVisible:false, lastValueVisible:true
       });",
     "activeLineSeries=activeChart.addLineSeries({
         lineWidth:3, priceLineVisible:false, lastValueVisible:true
