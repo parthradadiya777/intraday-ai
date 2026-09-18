@@ -215,43 +215,63 @@ function renderState(j){
 async function state(){try{let r=await fetch('/api/state');renderState(await r.json())}catch(e){$('msg').textContent='Connection error'}}
 async function scanNow(){if(window.scanning)return;window.scanning=true;$('msg').innerHTML='<span class="spinner"></span> Starting fresh NSE scan…';try{await fetch('/api/scan?start=1')}catch(e){}let timer=setInterval(async()=>{await state();let r=await fetch('/api/state');let j=await r.json();if(!j.scanning){clearInterval(timer);window.scanning=false;renderState(j)}},700)}
 async function openStock(sym){sym=decodeURIComponent(sym);activeChartSymbol=sym;$('modal').style.display='flex';$('dtitle').textContent=sym;$('dsub').textContent='Loading latest stock data…';$('details').innerHTML='<div class="empty">Fetching…</div>';loadChart('5');try{let r=await fetch('/api/stock?symbol='+encodeURIComponent(sym));let j=await r.json();if(!j.ok)throw Error(j.error||'Failed');let x=j.data;$('dsub').textContent='NSE • '+(j.refined?'5-minute AI refined':'snapshot data');let items=[['Price',money(x.price)],['Change',val(x.change)+'%'],['AI Score',val(x.score)],['Signal',val(x.signal)],['Confidence',val(x.ai_confidence)+'%'],['Model',val(x.ai_model)],['RSI',val(x.rsi)],['EMA 9',money(x.ema9)],['EMA 21',money(x.ema21)],['VWAP',money(x.vwap)],['MACD',val(x.macd)],['MACD Signal',val(x.macd_signal)],['ADX',val(x.adx)],['Relative Volume',val(x.relative_volume)+'x'],['ATR',money(x.atr)],['Momentum',val(x.momentum)+'%'],['Volume',Number(x.volume||0).toLocaleString('en-IN')],['Target',money(x.target)],['Stop Loss',money(x.sl)]];$('details').innerHTML=items.map(a=>'<div class="detail"><b>'+a[0]+'</b><span>'+a[1]+'</span></div>').join('');$('dreason').textContent=x.ai_reason||'No additional AI explanation available.'}catch(e){$('details').innerHTML='<div class="empty">'+e.message+'</div>';$('dsub').textContent='Unable to load stock details'}}
-function closeModal(){$('modal').style.display='none'}
+function closeModal(){$('modal').style.display='none';if(chartRefreshTimer){clearInterval(chartRefreshTimer);chartRefreshTimer=null}if(activeChart){try{activeChart.remove()}catch(e){}activeChart=null;activeCandleSeries=null;activeVolumeSeries=null}}
 $('budget').addEventListener('input',()=>render());$('search').addEventListener('input',()=>{lastQuery=$('search').value;render()});
 state();setInterval(state,1500);
 
 let activeChartSymbol='', activeChart=null, activeCandleSeries=null, activeVolumeSeries=null;
+let chartRefreshTimer=null, chartInterval='5';
 async function loadChart(interval='5'){
   if(!activeChartSymbol)return;
-  $('chartStatus').textContent='Loading '+interval+' chart…';
+  chartInterval=interval;
+  $('chartStatus').innerHTML='<span class="spinner"></span> Syncing '+interval+'m candles with NSE…';
   try{
-    const r=await fetch('/api/chart?symbol='+encodeURIComponent(activeChartSymbol)+'&interval='+encodeURIComponent(interval));
+    const r=await fetch('/api/chart?symbol='+encodeURIComponent(activeChartSymbol)+'&interval='+encodeURIComponent(interval),{cache:'no-store'});
     const j=await r.json();
     if(!j.ok)throw Error(j.error||'Chart unavailable');
     const el=$('priceChart');
-    if(activeChart){try{activeChart.remove()}catch(e){}}
-    activeChart=LightweightCharts.createChart(el,{
-      width:el.clientWidth,height:el.clientHeight,
-      layout:{background:{color:'#ffffff'},textColor:'#687386'},
-      grid:{vertLines:{color:'#edf0f4'},horzLines:{color:'#edf0f4'}},
-      rightPriceScale:{borderColor:'#dce2e8'},
-      timeScale:{borderColor:'#dce2e8',timeVisible:true,secondsVisible:false},
-      crosshair:{mode:1}
-    });
-    activeCandleSeries=activeChart.addCandlestickSeries({
-      upColor:'#16a34a',downColor:'#dc2626',borderVisible:false,
-      wickUpColor:'#16a34a',wickDownColor:'#dc2626'
-    });
+
+    // Reuse the same chart when possible; only rebuild if the container changed.
+    if(!activeChart){
+      activeChart=LightweightCharts.createChart(el,{
+        width:el.clientWidth,height:el.clientHeight,
+        layout:{background:{color:'#ffffff'},textColor:'#687386'},
+        grid:{vertLines:{color:'#edf0f4'},horzLines:{color:'#edf0f4'}},
+        rightPriceScale:{borderColor:'#dce2e8'},
+        timeScale:{borderColor:'#dce2e8',timeVisible:true,secondsVisible:false},
+        crosshair:{mode:1}
+      });
+      activeCandleSeries=activeChart.addCandlestickSeries({
+        upColor:'#16a34a',downColor:'#dc2626',borderVisible:false,
+        wickUpColor:'#16a34a',wickDownColor:'#dc2626'
+      });
+      activeVolumeSeries=activeChart.addHistogramSeries({
+        priceFormat:{type:'volume'},priceScaleId:'volume',
+        scaleMargins:{top:0.82,bottom:0}
+      });
+      window.addEventListener('resize',()=>{if(activeChart)activeChart.resize(el.clientWidth,el.clientHeight)});
+    }
+
     activeCandleSeries.setData(j.rows.map(x=>({time:x.time,open:x.open,high:x.high,low:x.low,close:x.close})));
-    activeVolumeSeries=activeChart.addHistogramSeries({
-      priceFormat:{type:'volume'},priceScaleId:'volume',
-      scaleMargins:{top:0.82,bottom:0}
-    });
     activeVolumeSeries.setData(j.rows.map(x=>({time:x.time,value:x.volume,color:x.close>=x.open?'#86efac':'#fca5a5'})));
     activeChart.timeScale().fitContent();
-    $('chartStatus').textContent=(j.rows.length)+' candles • '+interval+' timeframe';
-    window.addEventListener('resize',()=>{if(activeChart)activeChart.resize(el.clientWidth,el.clientHeight)});
-  }catch(e){$('chartStatus').textContent='Chart error: '+e.message}
+
+    const last=j.rows[j.rows.length-1];
+    const lastTime=last?new Date(last.time*1000):null;
+    const session=lastTime?lastTime.toLocaleDateString('en-IN',{day:'2-digit',month:'short'}):'—';
+    $('chartStatus').textContent=(j.rows.length)+' candles • '+interval+'m • Session '+session+' • NSE sync';
+  }catch(e){
+    $('chartStatus').textContent='Chart error: '+e.message;
+  }
 }
+
+function startChartLiveRefresh(){
+  if(chartRefreshTimer)clearInterval(chartRefreshTimer);
+  chartRefreshTimer=setInterval(()=>{
+    if($('modal').style.display==='flex' && activeChartSymbol) loadChart(chartInterval);
+  },5000);
+}
+startChartLiveRefresh();
 </script></body></html>'''
 
 
@@ -357,17 +377,36 @@ class FastHandler(app_auto.Handler):
                     interval = int(interval_raw)
                     if interval not in (1,3,5,10,15,30,60):
                         interval = 5
-                    # Prefer NSE's current-day candle endpoint for intraday charts.
-                    df = live.get_stock_intraday_tick_by_tick_data(symbol, candle_interval=interval)
-                    # Before/after market hours, fall back to historical intraday data.
-                    if df is None or len(df) == 0:
-                        days = 7 if interval <= 15 else 30
-                        df = historical.get_stock_historical_data(
-                            symbol,
-                            __import__('datetime').datetime.now() - __import__('datetime').timedelta(days=days),
-                            __import__('datetime').datetime.now(),
-                            interval=interval
-                        )
+
+                    # Build the intraday chart from BOTH sources:
+                    # 1) historical candles provide the full session history;
+                    # 2) live NSE candles overlay the latest/current candle.
+                    # This avoids the old "1 candle" chart when NSE's live endpoint
+                    # returns only the currently forming candle.
+                    import pandas as pd
+                    now = __import__('datetime').datetime.now()
+                    days = 7 if interval <= 15 else 30
+                    hist_df = historical.get_stock_historical_data(
+                        symbol,
+                        now - __import__('datetime').timedelta(days=days),
+                        now,
+                        interval=interval
+                    )
+                    live_df = live.get_stock_intraday_tick_by_tick_data(
+                        symbol,
+                        candle_interval=interval
+                    )
+
+                    frames = [x for x in (hist_df, live_df) if x is not None and len(x)]
+                    if not frames:
+                        df = None
+                    elif len(frames) == 1:
+                        df = frames[0]
+                    else:
+                        # Normalize column names just enough to concatenate sources.
+                        # The later live frame is kept last so duplicate timestamps
+                        # are replaced by the freshest NSE values below.
+                        df = pd.concat(frames, axis=0, sort=False)
 
                 if df is None or len(df) == 0:
                     self.send_json({'ok': False, 'error': 'No chart data available for this timeframe'}, 404); return
@@ -407,11 +446,22 @@ class FastHandler(app_auto.Handler):
                         continue
 
                 # Lightweight Charts requires strictly ascending, unique timestamps.
+                # Keep the latest available trading session only, so 5m/15m charts
+                # show a complete session instead of mixing several days.
                 dedup = {}
                 for x in out:
                     dedup[x['time']] = x
-                out = [dedup[k] for k in sorted(dedup)]
-                out = out[-1500:]
+                ordered = [dedup[k] for k in sorted(dedup)]
+
+                if ordered:
+                    from datetime import datetime
+                    latest_day = datetime.fromtimestamp(ordered[-1]['time']).date()
+                    ordered = [
+                        x for x in ordered
+                        if datetime.fromtimestamp(x['time']).date() == latest_day
+                    ]
+
+                out = ordered[-1500:]
                 if not out:
                     self.send_json({'ok': False, 'error': 'NSE returned chart rows but no valid OHLC candles'}, 503); return
                 self.send_json({'ok': True, 'symbol': symbol, 'interval': str(interval), 'rows': out})
