@@ -6,6 +6,9 @@ import app_auto
 import start
 from nsemine import live
 
+# NIFTY50_DIRECT_PANEL
+from nsemine import live
+
 app_auto.STATE.setdefault('progress', 0)
 app_auto.STATE.setdefault('progress_text', 'Ready')
 app_auto.STATE.setdefault('scan_id', 0)
@@ -149,6 +152,13 @@ tr.stockrow{cursor:pointer}tr.stockrow:hover{background:#f6f9fc}.fit{color:#0783
 <header><h1>Intraday AI</h1><div class="sub">NSE intraday AI scanner • multi-stock search • live recommendation</div>
 <div class="status"><span class="chip" id="market">MARKET --</span><span class="chip" id="last">Last scan: --</span><span class="chip">AUTO SCAN ON</span></div></header>
 <div class="wrap">
+<div class="panel" id="nifty50Panel">
+<h2>🇮🇳 NIFTY 50</h2>
+<div id="niftyIndex" style="padding:12px;background:#f6f8fa;border-radius:10px;margin-bottom:12px">Loading NIFTY 50…</div>
+<div class="searchrow"><input id="niftySearch" class="search" placeholder="🔍 Search NIFTY 50 stock"><span id="niftyInfo" class="searchinfo"></span></div>
+<div class="tablewrap"><table><thead><tr><th>Stock</th><th>Price</th><th>Change</th><th>Weight</th><th>Volume</th><th>Turnover</th></tr></thead><tbody id="niftyRows"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody></table></div>
+</div>
+
 <div class="panel"><div class="controls"><b>Investment Budget ₹</b><input id="budget" type="number" value="5000" min="0" step="100">
 <button onclick="scanNow()">SCAN NSE</button><span id="msg">Ready</span></div>
 <div class="hint">Budget changes are applied immediately. Recommendations only show stocks that fit the current budget.</div>
@@ -196,6 +206,28 @@ async function openStock(sym){sym=decodeURIComponent(sym);$('modal').style.displ
 function closeModal(){$('modal').style.display='none'}
 $('budget').addEventListener('input',()=>render());$('search').addEventListener('input',()=>{lastQuery=$('search').value;render()});
 state();setInterval(state,1500);
+
+let NIFTY50_DIRECT=[];
+function niftyMoney(v){return v==null?'—':'₹'+Number(v).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});}
+function renderNifty50(){
+ const q=($('niftySearch').value||'').trim().toUpperCase();
+ const a=NIFTY50_DIRECT.filter(x=>!q||x.symbol.toUpperCase().includes(q));
+ $('niftyInfo').textContent='Showing '+a.length+' of '+NIFTY50_DIRECT.length+' NIFTY 50 stocks';
+ $('niftyRows').innerHTML=a.map(x=>{
+  const ch=x.change==null?null:Number(x.change);
+  return '<tr class="stockrow" onclick="openStock(\\''+encodeURIComponent(x.symbol)+'\\')"><td><b>'+x.symbol+'</b></td><td>'+niftyMoney(x.price)+'</td><td class="'+(ch!=null&&ch>=0?'green':'red')+'">'+(ch==null?'—':(ch>=0?'+':'')+ch.toFixed(2)+'%')+'</td><td>'+(x.weightage==null?'—':Number(x.weightage).toFixed(2)+'%')+'</td><td>'+(x.volume==null?'—':Number(x.volume).toLocaleString('en-IN'))+'</td><td>'+(x.turnover==null?'—':Number(x.turnover).toLocaleString('en-IN'))+'</td></tr>';
+ }).join('')||'<tr><td colspan="6" class="empty">No matching NIFTY 50 stock.</td></tr>';
+}
+async function loadNifty50Direct(){
+ try{
+  const [ir,cr]=await Promise.all([fetch('/api/nifty50/index'),fetch('/api/nifty50')]);
+  const ij=await ir.json(),cj=await cr.json();
+  if(ij.ok){const d=ij.data,ch=Number(d.change||0);$('niftyIndex').innerHTML='<b style="font-size:22px">NIFTY 50 '+niftyMoney(d.price)+'</b> <span class="'+(ch>=0?'green':'red')+'" style="font-size:18px;font-weight:800;margin-left:12px">'+(ch>=0?'+':'')+ch.toFixed(2)+'%</span><div class="small" style="margin-top:6px">Open '+niftyMoney(d.open)+' · High '+niftyMoney(d.high)+' · Low '+niftyMoney(d.low)+' · Prev '+niftyMoney(d.previous_close)+'</div>';}
+  if(cj.ok){NIFTY50_DIRECT=cj.rows||[];renderNifty50();} else $('niftyRows').innerHTML='<tr><td colspan="6" class="empty">'+(cj.error||'NIFTY 50 unavailable')+'</td></tr>';
+ }catch(e){$('niftyIndex').textContent='NIFTY 50 data unavailable';}
+}
+$('niftySearch').addEventListener('input',renderNifty50);
+loadNifty50Direct();setInterval(loadNifty50Direct,15000);
 </script></body></html>'''
 
 
@@ -281,6 +313,28 @@ class FastHandler(app_auto.Handler):
                 if tech:data.update(tech);refined=True
             except Exception:pass
             self.send_json({'ok':True,'data':data,'refined':refined});return
+
+        if (path == '/api/nifty50') {
+            try:
+                df = live.get_index_constituents_live_snapshot('NIFTY 50')
+                if df is None or len(df) == 0:
+                    self.send_json({'ok': False, 'error': 'NIFTY 50 constituent data unavailable'}, 503); return
+                rows = []
+                for _, r in df.iterrows():
+                    sym = str(r.get('symbol', '')).strip()
+                    if sym:
+                        rows.append({'symbol': sym, 'price': r.get('ltp'), 'change': r.get('changepct'), 'weightage': r.get('weightage'), 'volume': r.get('volume'), 'turnover': r.get('turnover')})
+                self.send_json({'ok': True, 'rows': rows, 'count': len(rows)}); return
+            except Exception as e:
+                self.send_json({'ok': False, 'error': str(e)[:180]}, 503); return
+        if path == '/api/nifty50/index':
+            try:
+                q = live.get_index_live_price('NIFTY 50')
+                if not q:
+                    self.send_json({'ok': False, 'error': 'NIFTY 50 index unavailable'}, 503); return
+                self.send_json({'ok': True, 'data': {'price': q.get('close'), 'change': q.get('changepct'), 'open': q.get('open'), 'high': q.get('high'), 'low': q.get('low'), 'previous_close': q.get('previous_close')}}); return
+            except Exception as e:
+                self.send_json({'ok': False, 'error': str(e)[:180]}, 503); return
         return super().do_GET()
 
 app_auto.Handler=FastHandler
