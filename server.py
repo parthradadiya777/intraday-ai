@@ -507,6 +507,8 @@ async function loadNifty50(){
 }
 n$('niftySearch').addEventListener('input',niftyRender);loadNifty50();setInterval(loadNifty50,5000);</script>'''
 app_auto.HTML = app_auto.HTML.replace('<div class="wrap">', _NIFTY50_PANEL + '<div class="wrap">' + _NIFTY50_SCRIPT)
+# Keep the NIFTY 50 section hidden in the scanner UI.
+app_auto.HTML = app_auto.HTML.replace('</head>', '<style>.nifty-panel{display:none!important}</style></head>', 1)
 
 def _clean_json_value(v):
     if isinstance(v, (datetime,)):
