@@ -576,9 +576,47 @@ class NiftyHandler(FastHandler):
     def do_GET(self):
         path, _, query = self.path.partition('?')
         if path == '/api/nifty50':
-            with NIFTY_LOCK:
-                payload={'ok':bool(NIFTY_CACHE['rows']),'rows':list(NIFTY_CACHE['rows']),'count':len(NIFTY_CACHE['rows']),'breadth':dict(NIFTY_CACHE.get('breadth',{})),'error':NIFTY_CACHE['error'],'ts':NIFTY_CACHE['ts']}
-            self.send_json(payload, 200); return
+            # Serve NIFTY stocks directly from the main scanner state on every
+            # request. This removes any dependency on the background NIFTY
+            # refresh thread and guarantees the panel can render as soon as
+            # the main scanner has NSE rows.
+            rows_by_symbol = {}
+            try:
+                current = app_auto.STATE.get('rows', []) or []
+                for r in current:
+                    sym = str(r.get('symbol','')).strip().upper()
+                    if sym in NIFTY_SYMBOLS:
+                        rows_by_symbol[sym] = {
+                            'symbol': sym,
+                            'price': r.get('price'),
+                            'change': r.get('change'),
+                            'weightage': None,
+                            'volume': r.get('volume'),
+                            'turnover': r.get('turnover')
+                        }
+            except Exception:
+                pass
+
+            rows = [rows_by_symbol.get(s, {
+                'symbol': s, 'price': None, 'change': None,
+                'weightage': None, 'volume': None, 'turnover': None
+            }) for s in NIFTY_SYMBOLS]
+
+            valid = [r for r in rows if r.get('price') is not None]
+            breadth = {
+                'advance': sum(1 for r in valid if float(r.get('change') or 0) > 0),
+                'decline': sum(1 for r in valid if float(r.get('change') or 0) < 0),
+                'unchanged': sum(1 for r in valid if float(r.get('change') or 0) == 0)
+            }
+            self.send_json({
+                'ok': True,
+                'rows': rows,
+                'count': len(rows),
+                'breadth': breadth,
+                'error': '' if valid else 'Waiting for NSE snapshot',
+                'ts': app_auto.STATE.get('ts', 0)
+            }, 200)
+            return
         if path == '/api/nifty50/index':
             with NIFTY_LOCK:
                 q=dict(NIFTY_CACHE['index'])
